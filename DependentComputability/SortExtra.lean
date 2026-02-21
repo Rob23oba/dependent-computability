@@ -102,6 +102,17 @@ def mkNewName (nm : Lean.Name) : Lean.Name :=
 def mkNewInductName (nm : Lean.Name) : Lean.Name :=
   .str (mkNewName nm) "_induct"
 
+open Lean in
+@[match_pattern]
+abbrev mkExtraApp (ty e : Expr) : Expr :=
+  .app (.proj ``SortExtra 0 ty) e
+
+open Lean Qq in
+@[inline]
+def mkExtraAppQ {α_base : Q(Sort u)} (α : Q(New.Sort.{u}.1 $α_base))
+    (x_base : Q($α_base)) : Q(Sort u) :=
+  q($α.1 $x_base)
+
 open Lean Meta in
 partial def conversionStepNew (e : Expr) : MetaM Expr := do
   let rec visit (e : Expr) (baseMap : FVarIdMap Expr) : MonadCacheT ExprStructEq Expr MetaM Expr :=
@@ -120,7 +131,7 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
         let baseName := nm.appendAfter "_base"
         withLetDecl baseName t v (nondep := false) fun baseVar => do
           let newT ← visit t baseMap
-          let newT' := .app (.proj ``SortExtra 0 newT) (.bvar 0)
+          let newT' := mkExtraApp newT (.bvar 0)
           let newV ← visit v baseMap
           withLetDecl nm newT' newV (nondep := nd) fun var => do
             let newB ← visit (b.instantiate1 baseVar) (baseMap.insert baseVar.fvarId! var)
@@ -134,7 +145,7 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
         let baseName := nm.appendAfter "_base"
         withLocalDecl baseName bi t fun baseVar => do
           let newT ← visit t baseMap
-          let newT' := .app (.proj ``SortExtra 0 newT) (.bvar 0)
+          let newT' := mkExtraApp newT (.bvar 0)
           withLocalDecl nm bi newT fun var => do
             let newB ← visit (b.instantiate1 baseVar) (baseMap.insert baseVar.fvarId! var)
             let newB := newB.abstract #[baseVar, var]
@@ -145,7 +156,7 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
         let baseName := nm.appendAfter "_base"
         withLocalDecl baseName bi t fun baseVar => do
           let newT ← visit t baseMap
-          let newT' := .app (.proj ``SortExtra 0 newT) (.bvar 0)
+          let newT' := mkExtraApp newT (.bvar 0)
           withLocalDecl nm bi newT fun var => do
             let newB ← visit (b.instantiate1 baseVar) (baseMap.insert baseVar.fvarId! var)
             let newB := newB.abstract #[baseVar, var]
@@ -159,7 +170,7 @@ def populateBaseMap : MetaM (FVarIdMap Expr) := do
   let mut baseMap : FVarIdMap Expr := {}
   for decl in lctx do
     let type := decl.type
-    let .app (.proj ``SortExtra 0 _ty) (.fvar baseVar) := type | continue
+    let mkExtraApp _ty (.fvar baseVar) := type | continue
     baseMap := baseMap.insert baseVar decl.toExpr
   return baseMap
 
@@ -176,7 +187,7 @@ elab tk:"convert_to_new% " t:term : term => do
   let res ← (conversionStepNew.visit expr baseMap).run
   if let some expTy := expectedType? then
     let expTy ← instantiateMVars expTy
-    let .app (.proj ``SortExtra 0 ty) val := expTy | return res
+    let mkExtraApp ty val := expTy | return res
     let type ← Meta.inferType expr
     let typeRes ← (conversionStepNew.visit type baseMap).run
     discard <| Meta.isDefEq ty typeRes
@@ -194,7 +205,7 @@ elab tk:"convert_to_new_type% " t:term : term => do
   if type.hasMVar then
     throwErrorAt tk "expression has metavariables"
   let newExpr ← (conversionStepNew.visit type baseMap).run
-  return .app (.proj ``SortExtra 0 newExpr) expr
+  return mkExtraApp newExpr expr
 
 class NonemptyExtra {α_base : Sort u} (α : convert_to_new_type% α_base) where
   nonempty : ∀ a, Nonempty (α.1 a)
@@ -216,41 +227,23 @@ theorem NonemptyExtra.transfer {p_base : Prop} (p : convert_to_new_type% p_base)
   obtain ⟨h'⟩ := NonemptyExtra.nonempty (α := p) h
   exact h'
 
-/-
-inductive New.Option._induct {α_base : Type u} (α : convert_to_new_type% α_base) :
-    Option α_base → Type u where
-  | none : @_induct α_base α (@Option.none α_base)
-  | some {x_base : α_base} (x : α.1 x_base) : @_induct α_base α (@Option.some α_base x_base)
-
-
-inductive New.Prod._induct {α_base : Type u} (α : convert_to_new_type% α_base)
-    {β_base : Type v} (β : convert_to_new_type% β_base)
-    (p : Prod α_base β_base) : Type (max u v) where
-  | mk (fst : α.1 p.1) (snd : β.1 p.2) : @_induct α_base α β_base β p
-
-inductive New.List._induct {α_base : Type u} (α : convert_to_new_type% α_base) :
-    List α_base → Type u where
-  | nil : @_induct α_base α (@List.nil α_base)
-  | cons {head_base : α_base} (head : α.1 head_base)
-    {tail_base : List α_base} (tail : @_induct α_base α tail_base) :
-    @_induct α_base α (@List.cons α_base head_base tail_base)
--/
-
 open Lean Meta
 
 def IsRepresentable {α_base : Sort u} {α : convert_to_new_type% α_base}
     {x_base : α_base} (x : convert_to_new_type% x_base) : Prop :=
   ∃ n, α.2 x n
 
-def DComputable {α_base : Sort u} {α : convert_to_new_type% α_base}
+inductive DComputable {α_base : Sort u} {α : convert_to_new_type% α_base}
     {β_base : α_base → Sort v} {β : convert_to_new_type% β_base}
-    {f_base : (a : α_base) → β_base a} (f : convert_to_new_type% f_base) : Prop :=
-  ∃ g, Nat.Partrec g ∧ ∀ ⦃a_base a n⦄, @α.2 a_base a n → ∃ m ∈ g n, (β a).2 (f a) m
+    {f_base : (a : α_base) → β_base a} (f : convert_to_new_type% f_base) : Prop where
+  | intro (g : ℕ →. ℕ) (hg : Nat.Partrec g)
+    (hg' : ∀ ⦃a_base a n⦄, @α.2 a_base a n → ∃ m ∈ g n, (β a).2 (f a) m)
 
-def DPrimrec {α_base : Sort u} {α : convert_to_new_type% α_base}
+inductive DPrimrec {α_base : Sort u} {α : convert_to_new_type% α_base}
     {β_base : α_base → Sort v} {β : convert_to_new_type% β_base}
-    {f_base : (a : α_base) → β_base a} (f : convert_to_new_type% f_base) : Prop :=
-  ∃ g, Nat.Primrec g ∧ ∀ ⦃a_base a n⦄, @α.2 a_base a n → (β a).2 (f a) (g n)
+    {f_base : (a : α_base) → β_base a} (f : convert_to_new_type% f_base) : Prop where
+  | intro (g : ℕ → ℕ) (hg : Nat.Primrec g)
+    (hg' : ∀ ⦃a_base a n⦄, @α.2 a_base a n → (β a).2 (f a) (g n))
 
 class FullyRepresentable {α_base : Sort u} (α : convert_to_new_type% α_base)
     extends UniqueExtra α where
@@ -370,7 +363,6 @@ theorem dprimrec_iff_primrec {α_base : Type u} {α : convert_to_new_type% α_ba
     [CompatibleEncodingRelation α] [CompatibleEncodingRelation β]
     {f_base : α_base → β_base} (f : convert_to_new_type% f_base) :
     DPrimrec f ↔ Primrec f_base := by
-  rw [DPrimrec]
   constructor
   · rintro ⟨g, hgprim, hg'⟩
     rw [Primrec]
@@ -469,12 +461,14 @@ protected theorem DPrimrec.const {α_base : Sort u} {α : convert_to_new_type% �
     DPrimrec (fun ⦃a_base : α_base⦄ (_ : α.1 a_base) => x) :=
   .const' (FullyRepresentable.isRepresentable x)
 
-protected theorem DPrimrec.comp {α_base : Sort u} {α : convert_to_new_type% α_base}
+protected theorem DPrimrec.comp.{u}
     {β_base : Sort v} {β : convert_to_new_type% β_base}
     {γ_base : β_base → Sort w} {γ : convert_to_new_type% γ_base}
     {f_base : (x : β_base) → γ_base x} {f : convert_to_new_type% f_base}
+    (hf : DPrimrec f)
+    {α_base : Sort u} {α : convert_to_new_type% α_base}
     {g_base : α_base → β_base} {g : convert_to_new_type% g_base}
-    (hf : DPrimrec f) (hg : DPrimrec g) :
+    (hg : DPrimrec g) :
     DPrimrec (convert_to_new% (fun a => f_base (g_base a))) := by
   obtain ⟨gf, hgf, hgf'⟩ := hf
   obtain ⟨gg, hgg, hgg'⟩ := hg
@@ -496,14 +490,11 @@ protected theorem DPrimrec.proof {α_base : Sort u} {α : convert_to_new_type% �
     {f_base : (a : α_base) → β_base a} {f : convert_to_new_type% f_base} :
     DPrimrec f := .of_isProp isProp_prop
 
-protected theorem DPrimrec.asort {α_base : Sort u} {α : convert_to_new_type% α_base}
+protected theorem DPrimrec.sort {α_base : Sort u} {α : convert_to_new_type% α_base}
     {f_base : (a : α_base) → Sort v} {f : convert_to_new_type% f_base} :
     DPrimrec (convert_to_new% f_base) := by
   use fun _ => 0, .zero
   intros; constructor
-
-protected theorem DPrimrec.sort {α_base : Sort u} {α : convert_to_new_type% α_base} :
-    DPrimrec (convert_to_new% fun _ : α_base => Sort v) := .asort
 
 protected theorem DPrimrec.dcomputable
     {α_base : Sort u} {α : convert_to_new_type% α_base}
@@ -532,12 +523,14 @@ protected theorem DComputable.const {α_base : Sort u} {α : convert_to_new_type
     [FullyRepresentable β] {x_base : β_base} {x : convert_to_new_type% x_base} :
     DComputable (fun ⦃a_base : α_base⦄ (_ : α.1 a_base) => x) := .of_prim (.const x)
 
-protected theorem DComputable.comp {α_base : Sort u} {α : convert_to_new_type% α_base}
+protected theorem DComputable.comp.{u}
     {β_base : Sort v} {β : convert_to_new_type% β_base}
     {γ_base : β_base → Sort w} {γ : convert_to_new_type% γ_base}
     {f_base : (x : β_base) → γ_base x} {f : convert_to_new_type% f_base}
+    (hf : DComputable f)
+    {α_base : Sort u} {α : convert_to_new_type% α_base}
     {g_base : α_base → β_base} {g : convert_to_new_type% g_base}
-    (hf : DComputable f) (hg : DComputable g) :
+    (hg : DComputable g) :
     DComputable (convert_to_new% (fun a => f_base (g_base a))) := by
   obtain ⟨gf, hgf, hgf'⟩ := hf
   obtain ⟨gg, hgg, hgg'⟩ := hg
@@ -547,6 +540,17 @@ protected theorem DComputable.comp {α_base : Sort u} {α : convert_to_new_type%
   obtain ⟨y, hy, hy'⟩ := hgf' hx'
   simp only [Part.bind_eq_bind, Part.mem_bind_iff]
   exact ⟨y, ⟨x, hx, hy⟩, hy'⟩
+
+protected theorem DPrimrec.compComputable.{u}
+    {β_base : Sort v} {β : convert_to_new_type% β_base}
+    {γ_base : β_base → Sort w} {γ : convert_to_new_type% γ_base}
+    {f_base : (x : β_base) → γ_base x} {f : convert_to_new_type% f_base}
+    (hf : DPrimrec f)
+    {α_base : Sort u} {α : convert_to_new_type% α_base}
+    {g_base : α_base → β_base} {g : convert_to_new_type% g_base}
+    (hg : DComputable g) :
+    DComputable (convert_to_new% (fun a => f_base (g_base a))) :=
+  .comp (.of_prim hf) hg
 
 protected theorem DComputable.of_isProp {α_base : Sort u} {α : convert_to_new_type% α_base}
     {β_base : α_base → Sort v} {β : convert_to_new_type% β_base}
@@ -559,12 +563,9 @@ protected theorem DComputable.proof {α_base : Sort u} {α : convert_to_new_type
     {f_base : (a : α_base) → β_base a} {f : convert_to_new_type% f_base} :
     DComputable f := .of_prim .proof
 
-protected theorem DComputable.asort {α_base : Sort u} {α : convert_to_new_type% α_base}
+protected theorem DComputable.sort {α_base : Sort u} {α : convert_to_new_type% α_base}
     {f_base : (a : α_base) → Sort v} {f : convert_to_new_type% f_base} :
-    DComputable (convert_to_new% f_base) := .of_prim .asort
-
-protected theorem DComputable.sort {α_base : Sort u} {α : convert_to_new_type% α_base} :
-    DComputable (convert_to_new% fun _ : α_base => Sort v) := .asort
+    DComputable (convert_to_new% f_base) := .of_prim .sort
 
 inductive New.PSigma._induct {α_base : Sort u} {α : convert_to_new_type% α_base}
     {β_base : α_base → Sort v} (β : convert_to_new_type% β_base)
@@ -639,6 +640,40 @@ theorem New.PSigma.snd.primrec.{c, u, v}
   intro a_base a n han
   exact (hf' han).2
 
+theorem New.PSigma.fst.computable.{c, u, v}
+    {ctx_base : Sort c} {ctx : convert_to_new_type% ctx_base}
+    {α_base : ctx_base → Sort u} {α : convert_to_new_type% α_base}
+    {β_base : (c : ctx_base) → α_base c → Sort v} {β : convert_to_new_type% β_base}
+    {self_base : (c : ctx_base) → (a : α_base c) ×' β_base c a}
+    {self : convert_to_new_type% self_base}
+    (self_prim : DComputable (convert_to_new% self_base)) :
+    DComputable (convert_to_new% fun c =>
+      @_root_.PSigma.fst (α_base c) (β_base c) (self_base c)) := by
+  obtain ⟨f, hf, hf'⟩ := self_prim
+  refine ⟨_, .comp .left hf, ?_⟩
+  intro a_base a n han
+  simp only [Part.bind_eq_bind, Part.mem_bind_iff, PFun.coe_val, Part.mem_some_iff, ↓existsAndEq,
+    and_true]
+  obtain ⟨y, hy, hy'⟩ := hf' han
+  exact ⟨y, hy, hy'.1⟩
+
+theorem New.PSigma.snd.computable.{c, u, v}
+    {ctx_base : Sort c} {ctx : convert_to_new_type% ctx_base}
+    {α_base : ctx_base → Sort u} {α : convert_to_new_type% α_base}
+    {β_base : (c : ctx_base) → α_base c → Sort v} {β : convert_to_new_type% β_base}
+    {self_base : (c : ctx_base) → (a : α_base c) ×' β_base c a}
+    {self : convert_to_new_type% self_base}
+    (self_prim : DComputable (convert_to_new% self_base)) :
+    DComputable (convert_to_new% fun c =>
+      @_root_.PSigma.snd (α_base c) (β_base c) (self_base c)) := by
+  obtain ⟨f, hf, hf'⟩ := self_prim
+  refine ⟨_, .comp .right hf, ?_⟩
+  intro a_base a n han
+  simp only [Part.bind_eq_bind, Part.mem_bind_iff, PFun.coe_val, Part.mem_some_iff, ↓existsAndEq,
+    and_true]
+  obtain ⟨y, hy, hy'⟩ := hf' han
+  exact ⟨y, hy, hy'.2⟩
+
 open Nat.Partrec (Code) in
 theorem DPrimrec.curry
     {α_base : Sort u} {α : convert_to_new_type% α_base}
@@ -671,7 +706,7 @@ theorem DPrimrec.constCurry.{u}
   refine .const' (x := convert_to_new% f_base) ?_
   rwa [isRepresentable_function_iff]
 
-protected theorem DComputable.constCurry
+protected theorem DComputable.constCurry.{u}
     {β_base : Sort v} {β : convert_to_new_type% β_base}
     {γ_base : β_base → Sort w} {γ : convert_to_new_type% γ_base}
     {f_base : (a : β_base) → γ_base a} {f : convert_to_new_type% f_base}
@@ -705,36 +740,6 @@ example
     DPrimrec (convert_to_new% fun x => f_base (g₁_base x) (g₂_base x)) :=
   .comp hf (New.PSigma.mk.primrec hg₁ hg₂)
 
-
-/-open Nat.Partrec (Code) in
-theorem dcomputable_curry
-    {α : Sort u} {β : α → Sort v} {γ : (a : α) → β a → Sort w}
-    [EncodingRelation α] [∀ x, EncodingRelation (β x)] [∀ x y, EncodingRelation (γ x y)]
-    {f : (a : α) → (b : β a) → γ a b} :
-    DComputable f ↔ DComputable (fun x : (a : α) ×' β a => f x.1 x.2) := by
-  by_cases h : IsProp.{imax v w}
-  · have := @(isProp_of_isProp_imax.{v, w} h).irrelevant
-    apply iff_of_true <;> apply DComputable.irrel
-  obtain ⟨evalc, hevalc⟩ := Code.exists_code.mp Code.eval_part
-  constructor
-  · rintro ⟨f, hf, hf'⟩
-    have : Nat.Partrec (fun a => (f a.unpair.1).bind
-        fun c => (Code.ofNatCode c).eval a.unpair.2) := by
-      rw [← Partrec.nat_iff] at hf ⊢
-      refine .bind (hf.comp (.comp .fst .unpair)) ?_
-      refine Code.eval_part.comp ?_ (.comp .snd (.comp .unpair .fst))
-      exact .comp (Computable.ofNat Code) .snd
-    refine ⟨_, this, ?_⟩
-    intro n ⟨a, b⟩ ⟨h₁, h₂⟩
-    obtain ⟨x, hx, hc⟩ := hf' h₁
-    rw [encodes_pi_def] at hc
-    obtain ⟨y, hy, hy'⟩ := hc _ _ h₂
-    simp only [Part.mem_bind_iff]
-    refine ⟨y, ⟨_, hx, ?_⟩, hy'⟩
-    simpa [← Code.ofNatCode_eq]
-  · intro h
-    exact .of_prim (.curry h)-/
-
 protected theorem DComputable.curry
     {α_base : Sort u} {α : convert_to_new_type% α_base}
     {β_base : α_base → Sort v} {β : convert_to_new_type% β_base}
@@ -743,18 +748,6 @@ protected theorem DComputable.curry
     (hf : DComputable (convert_to_new% (fun x : (a : α_base) ×' β_base a => f_base x.1 x.2))) :
     DComputable (convert_to_new% f_base) :=
   .of_prim (.curry hf)
-
-/-protected theorem DPrimrec.constCurry
-    {α : Sort u} {β : Sort v} {γ : β → Sort w} {f : (a : β) → γ a}
-    [EncodingRelation α] [EncodingRelation β] [∀ a, EncodingRelation (γ a)]
-    (hf : DComputable f) : DPrimrec fun _ : α => f := by
-  refine .const' ?_
-  rwa [isRepresentable_function_iff]
-
-protected theorem DComputable.constCurry
-    {α : Sort u} {β : Sort v} {γ : β → Sort w} {f : (a : β) → γ a}
-    [EncodingRelation α] [EncodingRelation β] [∀ a, EncodingRelation (γ a)]
-    (hf : DComputable f) : DComputable fun _ : α => f := .of_prim (.constCurry hf)-/
 
 protected theorem DComputable.app
     {ctx_base : Sort u} {ctx : convert_to_new_type% ctx_base}

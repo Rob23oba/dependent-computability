@@ -575,6 +575,8 @@ instance : UniqueExtra New.Nat where
   default _ := ()
   subsingleton _ := inferInstanceAs (Subsingleton Unit)
 
+def uniqueNatVal (n : Nat) : convert_to_new_type% n := ()
+
 convert_to_new Nat.add
 convert_to_new Nat.sub
 convert_to_new Nat.mul
