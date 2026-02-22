@@ -411,7 +411,7 @@ where
                localCompThms := c.localCompThms.insert val_base.fvarId! thm2 }
     | false =>
       let value := q(@DComputable.comp.{u} _ _ _ _ _ _ $val_comp)
-      let thm : LocalThm := { value := by exact value, paramInfos := #[.prim] }
+      let thm : LocalThm := { value := by exact value, paramInfos := #[.computable] }
       { c with localCompThms := c.localCompThms.insert val_base.fvarId! thm }
 
 @[inline]
@@ -447,9 +447,9 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     let t'lvl ← getLevel t'
     trace[debug] "under-application: {b.instantiate1 ctx_var} has type {ty} : Sort {t'lvl}"
     let b'lvl ← withLocalDecl nm' bi' t' (getLevel <| b'.instantiate1 ·)
-    pure (Expr.lam nm ctx_base (t'.abstract #[ctx_var]) bi, t'lvl,
-          Expr.lam nm ctx_base
-            (Expr.lam nm' t' (b'.abstract #[ctx_var, .fvar ⟨.anonymous⟩]) bi') bi, b'lvl)
+    let t'lam := Expr.lam nm ctx_base (t'.abstract #[ctx_var]) bi
+    let b'lam := Expr.lam nm ctx_base ((Expr.lam nm' t' b' bi').abstract #[ctx_var]) bi
+    pure (t'lam.abstract #[ctx_var], t'lvl, b'lam, b'lvl)
   have t' : Q($ctx_base → Sort t'lvl) := t'
   let _newt' : Q(convert_to_new_type% $t') ← convertToNew t'
   have b' : Q((c : $ctx_base) → $t' c → Sort b'lvl) := b'
@@ -554,7 +554,7 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     let (argT, arglvl) ← withLocalDecl nm bi ctx_base fun var => do
       let argT ← inferType (arg.instantiate1 var)
       let arglvl ← getLevel argT
-      return (.lam nm ctx_base argT bi, arglvl)
+      return (.lam nm ctx_base (argT.abstract #[var]) bi, arglvl)
     have argT : Q($ctx_base → Sort arglvl) := argT
     let _newargT : Q(convert_to_new_type% $argT) ← convertToNew argT
     have argLambda : Q((c : $ctx_base) → $argT c) := .lam nm ctx_base arg bi
@@ -562,27 +562,34 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     val := mkApp2 val argLambda newArgLambda
     match param with
     | .always => continue
-    | .prim => panic! "unimplemented"
+    | .prim =>
+      let .forallE _ (mkApp6 (.const ``DPrimrec [u, v]) α_base α β_base β g_base g) _ _ ←
+          inferType val | throwError "invalid lemma"
+      let subgoal ← @solveDPrimGoal true u v α_base α β_base β g_base g
+      val := val.app subgoal
     | .computable =>
       let subgoal ← solveDPrimGoal false q($argLambda) q($newArgLambda)
-      val := .app val subgoal
+      val := val.app subgoal
   if args.size = thm.paramInfos.size then
     return val
   -- over-application (ensure we are in computable territory)
   let false := prim |
-    withLocalDecl nm bi ctx_base fun var => do
-      throwError "invalid over-application in primrec goal: \
-        expected at most {thm.paramInfos.size} arguments but found {args.size} in\
-        {indentExpr <| b.instantiate1 var}"
-  let type ← withLocalDecl nm bi ctx_base fun var => do
-    let mut type ← inferType (mkAppN fn (args.take thm.paramInfos.size))
-    if type.getForallArity < args.size - thm.paramInfos.size then
-      type ← liftM <| forallBoundedTelescope type (some (args.size - thm.paramInfos.size))
-          mkForallFVars
-    return type.abstract #[var]
-  let mut newType ← convertToNew type
-  trace[debug] "handling over-application ({thm.paramInfos.size} < {args.size}):\
-    {indentExpr f}\nwith{indentExpr newType}"
+    try
+      return ← handleUnderApplication prim q($f_base) q($f)
+    catch _ =>
+      withLocalDecl nm bi ctx_base fun var => do
+        throwError "invalid over-application in primrec goal: \
+          expected at most {thm.paramInfos.size} arguments but found {args.size} in\
+          {indentExpr <| b.instantiate1 var}"
+  let mut (type, newType) ←
+    withLocalDeclQ nm bi q($ctx_base) fun var_base => do
+    withLocalDeclQ nm bi q($ctx.1 $var_base) fun var => do
+    withNewCtxVar var_base var do
+      let mut type ← inferType ((mkAppN fn (args.take thm.paramInfos.size)).instantiate1 var_base)
+      if type.getForallArity < args.size - thm.paramInfos.size then
+        type ← liftM <| forallBoundedTelescope type (some (args.size - thm.paramInfos.size))
+            mkForallFVars
+      return (type.abstract #[var_base], (← convertToNew type).abstract #[var_base, var])
   let mut b := mkAppN fn (args.take thm.paramInfos.size)
   let mut newB ←
     withLocalDeclQ nm bi q($ctx_base) fun var_base => do
@@ -591,39 +598,56 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       let res ← convertToNew (b.instantiate1 var_base)
       return res.abstract #[var_base, var]
   for arg in args[thm.paramInfos.size...*] do
-    let mkApp4 (.const ``New.Forall [t'lvl, b'lvl]) t'_base t' b'_base b' := id newType |
-      --withLocalDecl nm bi ctx_base fun var => do
-        --throwFunctionExpected ((mkAppN b args).instantiate1 var)
-        let newType2 := Expr.lam (nm.appendAfter "_base") ctx_base
-          (.lam nm (mkExtraApp ctx (.bvar 0)) newType bi) bi
-        throwError "function expected but we have{indentExpr newType2}"
-    have t'lam : Q($ctx_base → Sort t'lvl) := .lam nm ctx_base t'_base bi
-    have b'lam : Q((c : $ctx_base) → $t'lam c → Sort b'lvl) := .lam nm ctx_base b'_base bi
+    let wrapInNewLam (e : Expr) : Expr :=
+      .lam (nm.appendAfter "_base") ctx_base (.lam nm (mkExtraApp ctx (.bvar 0)) e bi) bi
+    let .forallE nnn ttt bbb bbbiii := id type | throwError "error"
+    let mkApp4 (.const ``New.Forall [t'lvl, b'lvl]) _ t' _ b' := id newType | unreachable!
+    have t'lam : Q($ctx_base → Sort t'lvl) := .lam nm ctx_base ttt bi
+    have b'lam : Q((c : $ctx_base) → $t'lam c → Sort b'lvl) :=
+      .lam nm ctx_base (.lam nnn ttt bbb bbbiii) bi
     have bLambda : Q((c : $ctx_base) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx_base b bi
     have argLambda : Q((c : $ctx_base) → $t'lam c) := .lam nm ctx_base arg bi
-    have _newt'lam : Q(convert_to_new_type% $t'lam) :=
-      .lam (nm.appendAfter "_base") ctx_base (.lam nm (mkExtraApp ctx (.bvar 0)) t' bi) bi
-    have _newb'lam : Q(convert_to_new_type% $b'lam) :=
-      .lam (nm.appendAfter "_base") ctx_base (.lam nm (mkExtraApp ctx (.bvar 0)) b' bi) bi
-    have newBLambda : Q(convert_to_new_type% $bLambda) :=
-      .lam (nm.appendAfter "_base") ctx_base (.lam nm (mkExtraApp ctx (.bvar 0)) newB bi) bi
+    have _newt'lam : Q(convert_to_new_type% $t'lam) := wrapInNewLam t'
+    have _newb'lam : Q(convert_to_new_type% $b'lam) := wrapInNewLam b'
+    have newBLambda : Q(convert_to_new_type% $bLambda) := wrapInNewLam newB
     let newArgLambda : Q(convert_to_new_type% $argLambda) ← convertToNew argLambda
     have val' : Q(DComputable (convert_to_new% $bLambda)) := val
     let argProof ← solveDPrimGoal false q($argLambda) q($newArgLambda)
     val := q(DComputable.app $val' $argProof)
-    newType := b'.beta #[arg, newArgLambda.bindingBody!.bindingBody!]
+    newType := b'.beta #[arg.liftLooseBVars 0 1, newArgLambda.bindingBody!.bindingBody!]
+    type := bbb.instantiate1 arg
     b := b.app arg
-    newB := mkApp2 newB arg newArgLambda.bindingBody!.bindingBody!
+    newB := mkApp2 newB (arg.liftLooseBVars 0 1) newArgLambda.bindingBody!.bindingBody!
   return val
 
 end
+
+partial def isTriviallyIrrelevant (e : Expr) : Option Expr := do
+  if let .const ``New.Sort [u] := e then
+    return q(instIrrelevantSort.{u})
+  else if let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := e then
+    let .lam nm t (.lam nm' t' b' bi') bi := β | none
+    have α_base : Q(Sort u) := α_base
+    have α : Q(convert_to_new_type% $α_base) := α
+    have β_base : Q($α_base → Sort v) := β_base
+    have β : Q(convert_to_new_type% $β_base) := β
+    let _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) ←
+      (isTriviallyIrrelevant b').map fun x =>
+        .lam nm t (.lam nm' t' x bi') bi
+    return q(instIrrelevantForall $α $β)
+  else
+    none
 
 elab "dcomp_tac" : tactic => do
   let goal ← getMainGoal
   goal.withContext do
   let type ← withReducible <| goal.getType'
-  let mkApp6 (.const ``DComputable [clvl, rlvl]) ctx_base ctx res_base res f_base f := type |
+  let mkApp6 (.const nm [clvl, rlvl]) ctx_base ctx res_base res f_base f := type |
     throwError "invalid goal for dcomp_tac: {type}"
+  let prim ←
+    if nm = ``DComputable then pure false
+    else if nm = ``DPrimrec then pure true
+    else throwError "invalid goal for dcomp_tac: {type}"
   have ctx_base : Q(Sort clvl) := ctx_base
   have _ctx : Q(convert_to_new_type% $ctx_base) := ctx
   have res_base : Q($ctx_base → Sort rlvl) := res_base
@@ -631,14 +655,41 @@ elab "dcomp_tac" : tactic => do
   have f_base : Q((c : $ctx_base) → $res_base c) := f_base
   have f : Q(convert_to_new_type% $f_base) := f
   let ctxUniv := mkFreshLevelName (← getLevelNames)
-  let context := {
+  let mut context := {
     contextUniv := ctxUniv
     localPrimThms := {}
     localCompThms := {}
     zeta := false
   }
+  for decl in (← getLCtx) do
+    let type ← whnfR decl.type
+    if let mkApp6 (.const ``DComputable [tlvl, blvl])
+        t_base t b_base b f_base@(.fvar _) f := type then
+      --Lean.logInfo decl.toExpr
+      have t_base : Q(Sort tlvl) := t_base
+      have _t : Q(convert_to_new_type% $t_base) := t
+      have b_base : Q($t_base → Sort blvl) := b_base
+      have _b : Q(convert_to_new_type% $b_base) := b
+      have f_base : Q((x : $t_base) → $b_base x) := f_base
+      have f : Q(convert_to_new_type% $f_base) := f
+      have e : Q(DComputable $f) := decl.toExpr
+      context := withBasicLocalThm.newContext false q($f) q($e) context
+    else if let mkExtraApp ty x@(.fvar _) := type then
+      let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := ty | continue
+      let .lam nm t (.lam nm' t' b' bi') bi := β | continue
+      have α_base : Q(Sort u) := α_base
+      have α : Q(convert_to_new_type% $α_base) := α
+      have β_base : Q($α_base → Sort v) := β_base
+      have β : Q(convert_to_new_type% $β_base) := β
+      let some b'irrel := isTriviallyIrrelevant b' | continue
+      have _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) :=
+        .lam nm t (.lam nm' t' b'irrel bi') bi
+      have x : Q((a : $α_base) → $β_base a) := x
+      have f : Q((New.Forall $α $β).1 $x) := decl.toExpr
+      have e : Q(DPrimrec $f) := q((DPrimrec.irrelevant))
+      context := withBasicLocalThm.newContext true q($f) q($e) context
   let baseMap ← populateBaseMap
-  let res ← (solveDPrimGoal false q($f_base) q($f)).run context |>.run baseMap |>.run
+  let res ← (solveDPrimGoal prim q($f_base) q($f)).run context |>.run baseMap |>.run
   goal.assign res
 
 end DPrimrec.Tactic
