@@ -51,13 +51,13 @@ partial def convertBackFromNew (e : Expr) : OptionT MetaM Expr := do
 def delabNew : Delab := whenNotPPOption getPPExplicit do
   let e ← getExpr
   if let mkExtraApp _ e := e then
-    withTheReader SubExpr (fun x => { x with expr := e }) do
+    withTheReader SubExpr (fun x => { x with expr := e, pos := x.pos.push 0 }) do
     let stx ← delab
-    `(convert_to_new_type% $stx)
+    `(new_type% $stx)
   else
     let some res ← (convertBackFromNew e).run | failure
-    withTheReader SubExpr (fun x => { x with expr := res }) do
+    withTheReader SubExpr (fun x => { x with expr := res, pos := x.pos.push 0 }) do
       let stx ← delab
-      `(convert_to_new% $stx)
+      `(new% $stx)
 
 end Delab

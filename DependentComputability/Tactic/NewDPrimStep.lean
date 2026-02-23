@@ -1,5 +1,5 @@
 import DependentComputability.SortExtra
-import Batteries
+
 namespace DPrimrec.Tactic
 
 open Lean Meta Elab Term Tactic Qq
@@ -305,38 +305,14 @@ def predName (prim : Bool) : Name :=
   if prim then ``DPrimrec else ``DComputable
 
 def mkPred (prim : Bool) {u v : Level}
-    {α_base : Q(Sort u)} {α : Q(convert_to_new_type% $α_base)}
-    {β_base : Q($α_base → Sort v)} {β : Q(convert_to_new_type% $β_base)}
-    {f_base : Q((a : $α_base) → $β_base a)} (f : Q(convert_to_new_type% $f_base)) :
+    {α_base : Q(Sort u)} {α : Q(new_type% $α_base)}
+    {β_base : Q($α_base → Sort v)} {β : Q(new_type% $β_base)}
+    {f_base : Q((a : $α_base) → $β_base a)} (f : Q(new_type% $f_base)) :
     Q(Prop) :=
   if prim then
     q(DPrimrec $f)
   else
     q(DComputable $f)
-
-/-set_option linter.unusedVariables false in
-def constCurryLemma (prim : Bool) (ulvl clvl rlvl : Level) :
-    Q(∀ {β_base : Sort clvl} {β : convert_to_new_type% β_base}
-      {γ_base : β_base → Sort rlvl} {γ : convert_to_new_type% γ_base}
-      {f_base : (a : β_base) → γ_base a} {f : convert_to_new_type% f_base}
-      (hf : DComputable f)
-      {α_base : Sort ulvl} {α : convert_to_new_type% α_base},
-      $(mkPred prim q(convert_to_new% fun _ : α_base => f_base)))= :=
-  match prim with
-  | true => q(@DPrimrec.constCurry.{ulvl, clvl, rlvl})
-  | false => q(@DComputable.constCurry.{ulvl, clvl, rlvl})-/
-
-/-set_option linter.unusedVariables false in
-def compLemma (prim : Bool) (ulvl clvl rlvl : Level) :
-    Q(∀ {β_base : Sort clvl} {β : convert_to_new_type% β_base}
-      {γ_base : β_base → Sort rlvl} {γ : convert_to_new_type% γ_base}
-      {f_base : (a : β_base) → γ_base a} {f : convert_to_new_type% f_base}
-      (hf : DComputable f)
-      {α_base : Sort ulvl} {α : convert_to_new_type% α_base},
-      $(mkPred prim _ _) (convert_to_new% fun _ : α_base => f_base)) :=
-  match prim with
-  | true => q(@DPrimrec.comp.{ulvl, clvl, rlvl})
-  | false => q(@DComputable.comp.{ulvl, clvl, rlvl})-/
 
 partial def whnfFast (e : Expr) (zeta : Bool) (argsRev : Array Expr := #[]) : MetaM Expr := do
   match e with
@@ -391,10 +367,10 @@ def withNewCtxVar (var_base var : Expr) (act : M α) : M α := do
 
 @[inline]
 def withBasicLocalThm (prim : Bool) {clvl tlvl : Level}
-    {ctx_base : Q(Sort clvl)} {ctx : Q(convert_to_new_type% $ctx_base)}
-    {res_lam_base : Q($ctx_base → Sort tlvl)} {res_lam : Q(convert_to_new_type% $res_lam_base)}
+    {ctx_base : Q(Sort clvl)} {ctx : Q(new_type% $ctx_base)}
+    {res_lam_base : Q($ctx_base → Sort tlvl)} {res_lam : Q(new_type% $res_lam_base)}
     {val_base : Q((a : $ctx_base) → $res_lam_base a)}
-    (val : Q(convert_to_new_type% $val_base))
+    (val : Q(new_type% $val_base))
     (val_comp : Q($(mkPred prim val)))
     (act : M α) : M α := do
   withReader newContext act
@@ -435,9 +411,9 @@ def withHaveDeclQ [MonadControlT MetaM n] [Monad n]
 
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
-    {ctx_base : Q(Sort clvl)} {ctx : Q(convert_to_new_type% $ctx_base)}
-    {res_base : Q($ctx_base → Sort rlvl)} {res : Q(convert_to_new_type% $res_base)}
-    (f_base : Q((a : $ctx_base) → $res_base a)) (f : Q(convert_to_new_type% $f_base)) :
+    {ctx_base : Q(Sort clvl)} {ctx : Q(new_type% $ctx_base)}
+    {res_base : Q($ctx_base → Sort rlvl)} {res : Q(new_type% $res_base)}
+    (f_base : Q((a : $ctx_base) → $res_base a)) (f : Q(new_type% $f_base)) :
     M Q($(mkPred prim f)) := do
   let .lam nm _ b bi := id f_base | unreachable!
   let (t', t'lvl, b', b'lvl) ← withLocalDeclQ nm bi q($ctx_base) fun ctx_var => do
@@ -451,23 +427,23 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     let b'lam := Expr.lam nm ctx_base ((Expr.lam nm' t' b' bi').abstract #[ctx_var]) bi
     pure (t'lam.abstract #[ctx_var], t'lvl, b'lam, b'lvl)
   have t' : Q($ctx_base → Sort t'lvl) := t'
-  let _newt' : Q(convert_to_new_type% $t') ← convertToNew t'
+  let _newt' : Q(new_type% $t') ← convertToNew t'
   have b' : Q((c : $ctx_base) → $t' c → Sort b'lvl) := b'
-  let _newb' : Q(convert_to_new_type% $b') ← convertToNew b'
+  let _newb' : Q(new_type% $b') ← convertToNew b'
   have : rlvl =QL imax t'lvl b'lvl := ⟨⟩
   have : $res_base =Q fun c => (x : $t' c) → $b' c x := ⟨⟩
-  have : $res =Q convert_to_new% fun c => (x : $t' c) → $b' c x := ⟨⟩
+  have : $res =Q new% fun c => (x : $t' c) → $b' c x := ⟨⟩
   let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f_base x.1 x.2)
-    q(convert_to_new% fun x : PSigma $t' => $f_base x.1 x.2)
+    q(new% fun x : PSigma $t' => $f_base x.1 x.2)
   match prim with
-  | true => return q(DPrimrec.curry (f := convert_to_new% $f_base) $proof)
-  | false => return q(DComputable.curry (f := convert_to_new% $f_base) $proof)
+  | true => return q(DPrimrec.curry (f := new% $f_base) $proof)
+  | false => return q(DComputable.curry (f := new% $f_base) $proof)
 
 -- assumes that `f_base` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
-    {ctx_base : Q(Sort clvl)} {ctx : Q(convert_to_new_type% $ctx_base)}
-    {res_base : Q($ctx_base → Sort rlvl)} {res : Q(convert_to_new_type% $res_base)}
-    (f_base : Q((a : $ctx_base) → $res_base a)) (f : Q(convert_to_new_type% $f_base)) :
+    {ctx_base : Q(Sort clvl)} {ctx : Q(new_type% $ctx_base)}
+    {res_base : Q($ctx_base → Sort rlvl)} {res : Q(new_type% $res_base)}
+    (f_base : Q((a : $ctx_base) → $res_base a)) (f : Q(new_type% $f_base)) :
     M Q($(mkPred prim f)) := withIncRecDepth do
   withTraceNode `debug (return m!"{exceptEmoji ·} trying to solve goal{indentExpr f}\n\
     with{indentExpr f_base}") do
@@ -499,9 +475,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     | .letE nm' t v b _ =>
       let tlvl ← withLocalDecl nm bi ctx_base fun var => getLevel (t.instantiate1 var)
       have letTy : Q(Sort imax clvl tlvl) := .forallE nm ctx_base t bi
-      let newLetTy : Q(convert_to_new_type% $letTy) ← convertToNew letTy
+      let newLetTy : Q(new_type% $letTy) ← convertToNew letTy
       have letVal : Q($letTy) := .lam nm ctx_base v bi
-      let newLetVal : Q(convert_to_new_type% $letVal) ← convertToNew letVal
+      let newLetVal : Q(new_type% $letVal) ← convertToNew letVal
       -- add a base variable
       return ← withLetDeclQ (nm'.appendAfter "_base") q($letVal) fun var_base _ => do
         -- add a converted variable
@@ -511,14 +487,14 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
           have b := mkAppN (b.instantiate1 (.app var (.bvar 0))) args
           have f_base' : Q((a : $ctx_base) → $res_base a) := .lam nm ctx_base b bi
           have : $f_base' =Q $f_base := ⟨⟩
-          let f : Q(convert_to_new_type% $f_base') ← convertToNew f_base'
+          let f : Q(new_type% $f_base') ← convertToNew f_base'
           if let .defEq _ := isAlwaysZeroQ tlvl then
             let res ← solveDPrimGoal prim q($f_base) q($f)
             return ← mkLetFVars #[var_base, var] res
           have letTyLam : Q($ctx_base → Sort tlvl) := .lam nm ctx_base t bi
-          let _newLetTyLam : Q(convert_to_new_type% $letTyLam) ← convertToNew letTyLam
+          let _newLetTyLam : Q(new_type% $letTyLam) ← convertToNew letTyLam
           have : $letTy =Q ∀ c : $ctx_base, $letTyLam c := ⟨⟩
-          have : $newLetTy =Q convert_to_new% ∀ c : $ctx_base, $letTyLam c := ⟨⟩
+          have : $newLetTy =Q new% ∀ c : $ctx_base, $letTyLam c := ⟨⟩
           let valcomp ← solveDPrimGoal prim q($letVal) q($newLetVal)
           have valcomp : Q($(mkPred prim q($var))) := valcomp
           -- add a computability/primrec proof
@@ -556,9 +532,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       let arglvl ← getLevel argT
       return (.lam nm ctx_base (argT.abstract #[var]) bi, arglvl)
     have argT : Q($ctx_base → Sort arglvl) := argT
-    let _newargT : Q(convert_to_new_type% $argT) ← convertToNew argT
+    let _newargT : Q(new_type% $argT) ← convertToNew argT
     have argLambda : Q((c : $ctx_base) → $argT c) := .lam nm ctx_base arg bi
-    let newArgLambda : Q(convert_to_new_type% $argLambda) ← convertToNew argLambda
+    let newArgLambda : Q(new_type% $argLambda) ← convertToNew argLambda
     val := mkApp2 val argLambda newArgLambda
     match param with
     | .always => continue
@@ -607,11 +583,11 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       .lam nm ctx_base (.lam nnn ttt bbb bbbiii) bi
     have bLambda : Q((c : $ctx_base) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx_base b bi
     have argLambda : Q((c : $ctx_base) → $t'lam c) := .lam nm ctx_base arg bi
-    have _newt'lam : Q(convert_to_new_type% $t'lam) := wrapInNewLam t'
-    have _newb'lam : Q(convert_to_new_type% $b'lam) := wrapInNewLam b'
-    have newBLambda : Q(convert_to_new_type% $bLambda) := wrapInNewLam newB
-    let newArgLambda : Q(convert_to_new_type% $argLambda) ← convertToNew argLambda
-    have val' : Q(DComputable (convert_to_new% $bLambda)) := val
+    have _newt'lam : Q(new_type% $t'lam) := wrapInNewLam t'
+    have _newb'lam : Q(new_type% $b'lam) := wrapInNewLam b'
+    have newBLambda : Q(new_type% $bLambda) := wrapInNewLam newB
+    let newArgLambda : Q(new_type% $argLambda) ← convertToNew argLambda
+    have val' : Q(DComputable (new% $bLambda)) := val
     let argProof ← solveDPrimGoal false q($argLambda) q($newArgLambda)
     val := q(DComputable.app $val' $argProof)
     newType := b'.beta #[arg.liftLooseBVars 0 1, newArgLambda.bindingBody!.bindingBody!]
@@ -628,9 +604,9 @@ partial def isTriviallyIrrelevant (e : Expr) : Option Expr := do
   else if let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := e then
     let .lam nm t (.lam nm' t' b' bi') bi := β | none
     have α_base : Q(Sort u) := α_base
-    have α : Q(convert_to_new_type% $α_base) := α
+    have α : Q(new_type% $α_base) := α
     have β_base : Q($α_base → Sort v) := β_base
-    have β : Q(convert_to_new_type% $β_base) := β
+    have β : Q(new_type% $β_base) := β
     let _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) ←
       (isTriviallyIrrelevant b').map fun x =>
         .lam nm t (.lam nm' t' x bi') bi
@@ -649,11 +625,11 @@ elab "dcomp_tac" : tactic => do
     else if nm = ``DPrimrec then pure true
     else throwError "invalid goal for dcomp_tac: {type}"
   have ctx_base : Q(Sort clvl) := ctx_base
-  have _ctx : Q(convert_to_new_type% $ctx_base) := ctx
+  have _ctx : Q(new_type% $ctx_base) := ctx
   have res_base : Q($ctx_base → Sort rlvl) := res_base
-  have _res : Q(convert_to_new_type% $res_base) := res
+  have _res : Q(new_type% $res_base) := res
   have f_base : Q((c : $ctx_base) → $res_base c) := f_base
-  have f : Q(convert_to_new_type% $f_base) := f
+  have f : Q(new_type% $f_base) := f
   let ctxUniv := mkFreshLevelName (← getLevelNames)
   let mut context := {
     contextUniv := ctxUniv
@@ -667,20 +643,20 @@ elab "dcomp_tac" : tactic => do
         t_base t b_base b f_base@(.fvar _) f := type then
       --Lean.logInfo decl.toExpr
       have t_base : Q(Sort tlvl) := t_base
-      have _t : Q(convert_to_new_type% $t_base) := t
+      have _t : Q(new_type% $t_base) := t
       have b_base : Q($t_base → Sort blvl) := b_base
-      have _b : Q(convert_to_new_type% $b_base) := b
+      have _b : Q(new_type% $b_base) := b
       have f_base : Q((x : $t_base) → $b_base x) := f_base
-      have f : Q(convert_to_new_type% $f_base) := f
+      have f : Q(new_type% $f_base) := f
       have e : Q(DComputable $f) := decl.toExpr
       context := withBasicLocalThm.newContext false q($f) q($e) context
     else if let mkExtraApp ty x@(.fvar _) := type then
       let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := ty | continue
       let .lam nm t (.lam nm' t' b' bi') bi := β | continue
       have α_base : Q(Sort u) := α_base
-      have α : Q(convert_to_new_type% $α_base) := α
+      have α : Q(new_type% $α_base) := α
       have β_base : Q($α_base → Sort v) := β_base
-      have β : Q(convert_to_new_type% $β_base) := β
+      have β : Q(new_type% $β_base) := β
       let some b'irrel := isTriviallyIrrelevant b' | continue
       have _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) :=
         .lam nm t (.lam nm' t' b'irrel bi') bi
