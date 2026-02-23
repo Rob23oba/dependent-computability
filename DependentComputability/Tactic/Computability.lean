@@ -1,8 +1,8 @@
 import DependentComputability.Tactic.NewDPrimStep
 import DependentComputability.Tactic.OtherDPrimStep
-import DependentComputability.Tactic.ConvertToNew
 import DependentComputability.Tactic.Delab
 import DependentComputability.Tactic.LetNew
+import DependentComputability.NewDecls
 
 open scoped Delab
 
@@ -229,6 +229,9 @@ theorem New.Unit.unit.computable {ctx_base : Sort u} {ctx : new_type% ctx_base} 
   refine .const' (x := new% ()) ?_
   exact ⟨0, .zero⟩
 
+@[other_dprim] lemma Unit.unit.dcomp {ctx : Sort u} : DComp (fun _ : ctx => ()) := .unsafeIntro
+lemma New.Unit.unit.dcomp : new_type% @Unit.unit.dcomp.{u} := @New.Unit.unit.computable
+
 example : DComputable (new% fun (x : Nat → Nat) y => x y) := by
   dcomp_tac
 
@@ -245,6 +248,9 @@ theorem _root_.New.Nat.zero.computable {ctx_base : Sort u} {ctx : new_type% ctx_
   refine ⟨0, ?_⟩
   rfl
 
+@[other_dprim] lemma Nat.zero.dcomp {ctx : Sort u} : DComp (fun _ : ctx => Nat.zero) := .unsafeIntro
+lemma New.Nat.zero.dcomp : new_type% @Nat.zero.dcomp.{u} := @New.Nat.zero.computable
+
 @[dprim]
 theorem _root_.New.Nat.succ.computable {ctx_base : Sort u} {ctx : new_type% ctx_base}
     {f_base : ctx_base → ℕ} {f : new_type% f_base}
@@ -254,6 +260,12 @@ theorem _root_.New.Nat.succ.computable {ctx_base : Sort u} {ctx : new_type% ctx_
   refine ⟨Nat.succ, .succ, ?_⟩
   intro a _ _ rfl
   exact ⟨a + 1, by simp, by rfl⟩
+
+set_option linter.unusedVariables.funArgs false in
+@[other_dprim] lemma Nat.succ.dcomp {ctx : Sort u} {f : ctx → ℕ} (f_comp : DComp f) :
+    DComp (fun c => Nat.succ (f c)) := .unsafeIntro
+lemma New.Nat.succ.dcomp : new_type% @Nat.succ.dcomp.{u} :=
+  fun _ _ _ _ _ hf => New.Nat.succ.computable hf
 
 @[dprim]
 theorem _root_.New.Nat.rec.primrec {ctx_base : Sort u} {ctx : new_type% ctx_base}
@@ -285,6 +297,17 @@ theorem _root_.New.Nat.rec.primrec {ctx_base : Sort u} {ctx : new_type% ctx_base
     specialize @hfs' ⟨c, (), New.Nat.rec (motive c) (zero c) (succ c) ()⟩
     exact @hfs' (Nat.pair nc (Nat.pair k _))
       ⟨by simpa using hnc, by simp; rfl, by simpa using ih⟩
+
+set_option linter.unusedVariables.funArgs false in
+@[other_dprim] lemma Nat.rec.dprim
+    {ctx : Sort u} {motive : ctx → ℕ → Sort v}
+    {zero : (c : ctx) → motive c .zero} (zero_comp : DPrim zero)
+    {succ : (c : ctx) → (n : ℕ) → motive c n → motive c (.succ n)}
+    (succ_comp : DPrim fun x : (c : ctx) ×' (n : ℕ) ×' motive c n => succ x.1 x.2.1 x.2.2)
+    {t : ctx → ℕ} (t_comp : DPrim t) :
+    DPrim fun c => @Nat.rec (motive c) (zero c) (succ c) (t c) := .unsafeIntro
+lemma New.Nat.rec.dprim.{u, v} : new_type% @Nat.rec.dprim.{u, v} :=
+  fun _ _ _ _ _ _ _ hz _ _ _ hs _ _ _ ht => New.Nat.rec.primrec hz hs ht
 
 @[dprim]
 theorem _root_.New.Nat.rec.computable {ctx_base : Sort u} {ctx : new_type% ctx_base}
@@ -321,3 +344,89 @@ theorem _root_.New.Nat.rec.computable {ctx_base : Sort u} {ctx : new_type% ctx_b
             Unit → motive_base c (n.succ)) ×' ℕ)) := by
     dcomp_tac
   exact .comp (.app recComp New.Unit.unit.computable) mk
+
+set_option linter.unusedVariables.funArgs false in
+@[other_dprim] lemma Nat.rec.dcomp
+    {ctx : Sort u} {motive : ctx → ℕ → Sort v}
+    {zero : (c : ctx) → motive c .zero} (zero_comp : DComp zero)
+    {succ : (c : ctx) → (n : ℕ) → motive c n → motive c (.succ n)} (succ_comp : DComp succ)
+    {t : ctx → ℕ} (t_comp : DComp t) :
+    DComp fun c => @Nat.rec (motive c) (zero c) (succ c) (t c) := .unsafeIntro
+lemma New.Nat.rec.dcomp.{u, v} : new_type% @Nat.rec.dcomp.{u, v} :=
+  fun _ _ _ _ _ _ _ hz _ _ _ hs _ _ _ ht => New.Nat.rec.computable hz hs ht
+
+open Lean Meta Qq
+def insertContextType (e : Expr) (ctx : Expr) (max : Nat) (insts : Array Expr := #[]) : Expr :=
+  match max, e with
+  | max + 1, .forallE nm t b bi =>
+    let t := t.instantiate insts
+    let newInst := .app (.bvar (insts.size + 1)) (.bvar 0)
+    .lam nm (.forallE `c ctx t .default) (insertContextType b ctx max (insts.push newInst)) bi
+  | _, t =>
+    let t := t.instantiate insts
+    .forallE `c ctx t .default
+
+open DPrimrec.Tactic in
+def autoDComp (name : Name) (arity : Option Nat := none) : MetaM Unit := do
+  let info ← getConstInfoDefn name
+  let levels := info.levelParams.map Level.param
+  let ctxUniv := Elab.Term.mkFreshLevelName info.levelParams
+  let ctxUniv' := Elab.Term.mkFreshLevelName (ctxUniv :: info.levelParams)
+  have clvl : Level := .param ctxUniv
+  withLocalDeclQ `ctx .implicit q(Sort clvl) fun (ctx : Q(Sort clvl)) => do
+  let e ← if arity.isSome then
+      forallBoundedTelescope info.type arity mkForallFVars
+    else pure info.type
+  let e := insertContextType e ctx (arity.getD e.getForallArity)
+  lambdaTelescope e fun params body => do
+    let context : Other.Context := {
+      contextUniv := ctxUniv'
+      localPrimThms := {}
+      localCompThms := {}
+      zeta := false
+    }
+    let rec populateContext (context : Other.Context) (i : Nat)
+        (vars : Array Expr) (infos : Array ParamComputability) :
+        MetaM Unit := do
+      if h : i < params.size then
+        let param := params[i]
+        let paramType ← inferType param
+        let vars := vars.push param
+        if ← isProp paramType then
+          return ← populateContext context (i + 1) vars (infos.push .always)
+        let .forallE _ _ b _ := id paramType | unreachable!
+        let (context, needComp) ← withLocalDeclD `c ctx fun var => do
+          let some ⟨v, irrel⟩ ← Other.isTriviallyIrrelevant (b.instantiate1 var) |
+            return (context, true)
+          have blam : Q($ctx → Sort v) := .lam `c ctx b .default
+          let _irrel : Q((x : $ctx) → Irrel ($blam x)) ← mkLambdaFVars #[var] irrel
+          have f : Q((a : $ctx) → $blam a) := param
+          have e : Q(DPrim $f) := q(.irrel)
+          return (Other.withBasicLocalThm.newContext true q($e) context, false)
+        unless needComp do
+          return ← populateContext context (i + 1) vars (infos.push .always)
+        let nm ← param.fvarId!.getUserName
+        let blvl ← withLocalDeclD `c ctx fun var => getLevel (b.instantiate1 var)
+        have blam : Q($ctx → Sort blvl) := .lam `c ctx b .default
+        have f : Q((a : $ctx) → $blam a) := param
+        withLocalDeclDQ (nm.appendAfter "_comp") q(DComp $f) fun (e : Q(DComp $f)) => do
+          let context := Other.withBasicLocalThm.newContext false q($e) context
+          populateContext context (i + 1) (vars.push e) (infos.push .computable)
+      else
+        let args := params.map (.app · (.bvar 0))
+        let rlvl ← withLocalDeclD `c ctx fun var => getLevel (body.bindingBody!.instantiate1 var)
+        have body : Q($ctx → Sort rlvl) := .lam `ctx ctx body.bindingBody! .default
+        have value : Q((c : $ctx) → $body c) := .lam `ctx ctx (info.value.beta args) .default
+        have const : Q((c : $ctx) → $body c) :=
+          .lam `ctx ctx (mkAppN (.const info.name levels) args) .default
+        have : $const =Q $value := ⟨⟩
+        let result ← (Other.solveDPrimGoal false q($value)).run context
+        have result : Q(DComp $const) := q($result)
+        check result
+        addDecl <| .thmDecl {
+          name := name ++ `dcomp
+          levelParams := ctxUniv :: info.levelParams
+          type := ← mkForallFVars vars result.ty
+          value := ← mkLambdaFVars vars result
+        }
+    populateContext context 0 #[ctx] #[]

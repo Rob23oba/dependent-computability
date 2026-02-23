@@ -113,6 +113,9 @@ def mkExtraAppQ {α_base : Q(Sort u)} (α : Q(New.Sort.{u}.1 $α_base))
     (x_base : Q($α_base)) : Q(Sort u) :=
   q($α.1 $x_base)
 
+open Lean in
+initialize declConverterRef : IO.Ref (Name → CoreM Unit) ← IO.mkRef fun _ => pure ()
+
 open Lean Meta in
 partial def conversionStepNew (e : Expr) : MetaM Expr := do
   let rec visit (e : Expr) (baseMap : FVarIdMap Expr) : MonadCacheT ExprStructEq Expr MetaM Expr :=
@@ -188,6 +191,10 @@ elab tk:"new% " t:term : term => do
     throwErrorAt tk "expression has free variables"
   if expr.hasMVar then
     throwErrorAt tk "expression has metavariables:{indentExpr expr}"
+  for const in expr.getUsedConstantsAsSet do
+    unless (← getEnv).contains (mkNewName const) do
+      let converter ← declConverterRef.get
+      converter const
   let res ← (conversionStepNew.visit expr baseMap).run
   if let some expTy := expectedType? then
     let expTy ← instantiateMVars expTy
@@ -208,6 +215,10 @@ elab tk:"new_type% " t:term : term => do
     throwErrorAt tk "expression has free variables"
   if type.hasMVar then
     throwErrorAt tk "expression has metavariables"
+  for const in type.getUsedConstantsAsSet do
+    unless (← getEnv).contains (mkNewName const) do
+      let converter ← declConverterRef.get
+      converter const
   let newExpr ← (conversionStepNew.visit type baseMap).run
   return mkExtraApp newExpr expr
 

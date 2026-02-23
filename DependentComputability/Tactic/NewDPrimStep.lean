@@ -1,4 +1,5 @@
 import DependentComputability.SortExtra
+import DependentComputability.Tactic.OtherDPrimStep
 
 namespace DPrimrec.Tactic
 

@@ -294,7 +294,7 @@ structure Context where
   localCompThms : FVarIdMap LocalThm
   zeta : Bool
 
-abbrev M := ReaderT Context <| ReaderT (FVarIdMap Expr) <| MonadCacheT ExprStructEq Expr MetaM
+abbrev M := ReaderT Context <| MetaM
 
 instance : Inhabited (M α) := ⟨(default : MetaM _)⟩
 
@@ -479,7 +479,7 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
     let b'lvl ← withLocalDecl nm bi ctx fun var =>
       withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>
-        getLevel (b'.instantiate #[var, var'])
+        getLevel (b'.instantiateRev #[var, var'])
     have t'lam : Q($ctx → Sort t'lvl) := .lam nm ctx t' bi
     have b'lam : Q((c : $ctx) → $t'lam c → Sort b'lvl) :=
       .lam nm ctx (.lam nm' t' b' bi') bi
@@ -529,7 +529,7 @@ elab "other_dcomp_tac" : tactic => do
   }
   for decl in (← getLCtx) do
     let type ← whnfR decl.type
-    if let mkApp3 (.const ``DComputable [tlvl, blvl]) t b f@(.fvar _) := type then
+    if let mkApp3 (.const ``DComp [tlvl, blvl]) t b f@(.fvar _) := type then
       have t : Q(Sort tlvl) := t
       have b : Q($t → Sort blvl) := b
       have f : Q((x : $t) → $b x) := f
@@ -546,8 +546,7 @@ elab "other_dcomp_tac" : tactic => do
         have f : Q((a : $t) → $blam a) := decl.toExpr
         have e : Q(DPrim $f) := q(.irrel)
         return withBasicLocalThm.newContext true q($e) context
-  let baseMap ← populateBaseMap
-  let res ← (solveDPrimGoal prim q($f)).run context |>.run baseMap |>.run
+  let res ← (solveDPrimGoal prim q($f)).run context
   goal.assign res
 
 end DPrimrec.Tactic.Other
