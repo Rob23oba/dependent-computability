@@ -117,6 +117,57 @@ open Lean in
 initialize declConverterRef : IO.Ref (Name → CoreM Unit) ← IO.mkRef fun _ => pure ()
 
 open Lean Meta in
+def projToRec (nm : Name) (idx : Nat) (struct : Expr) : MetaM Expr := do
+  let ind ← getConstInfoInduct nm
+  let [ctorName] := ind.ctors | throwError "invalid projection"
+  let ctor ← getConstVal ctorName
+  let casesOn ← getConstInfoDefn (mkCasesOnName nm)
+  let type ← inferType struct
+  let type ← withTransparency .all (whnf type)
+  let propRecursor := casesOn.levelParams.length == ind.levelParams.length
+  type.withApp fun fn paramsAndIndices => do
+    unless fn.isConstOf nm do
+      throwError "invalid projection {Expr.proj nm idx struct}"
+    let params := paramsAndIndices.extract 0 ind.numParams
+    let indices := paramsAndIndices.extract ind.numParams
+    let ctorType ← instantiateForall ctor.type params
+    let indType ← instantiateForall ind.type params
+    forallTelescope indType fun indexVars _ => do
+    withLocalDeclD `x (mkAppN (mkAppN fn params) indexVars) fun structVar => do
+      let indexVars := indexVars.push structVar
+      let rec mkCtorNth (type : Expr) (i n : Nat) : Expr :=
+        match type with
+        | .forallE nm t b bi => .lam nm t (mkCtorNth b i (n + 1)) bi
+        | _ => .bvar (n - i - 1)
+      let rec mkCasesOnApp (motive : Expr) (i : Nat) (indicesAndStruct : Array Expr) :
+          MetaM Expr := do
+        let levels ← if propRecursor then pure fn.constLevels!
+          else pure ((← getLevel motive) :: fn.constLevels!)
+        let expr := (casesOn.value.instantiateLevelParams casesOn.levelParams levels).beta params
+        let expr := .app expr (← mkLambdaFVars indexVars motive)
+        let expr := mkAppN expr indicesAndStruct
+        return .app expr (mkCtorNth ctorType i 0)
+      let rec traverseCtor (type : Expr) (i : Nat) : MetaM Expr := do
+        let .forallE nm t b bi := type |
+          throwError "invalid projection {Expr.proj nm idx struct}"
+        if i < idx then
+          if b.hasLooseBVars then
+            traverseCtor (b.instantiate1 (← mkCasesOnApp t i indexVars)) (i + 1)
+          else
+            traverseCtor (b.lowerLooseBVars 0 1) (i + 1)
+        else
+          mkCasesOnApp t i (indices.push struct)
+      termination_by idx - i
+      traverseCtor ctorType 0
+
+open Lean in
+def isStructureLikeWithLargeElim (nm : Name) : CoreM Bool := do
+  let { ctors := [_], numIndices := 0, isRec := false, levelParams, .. } ← getConstInfoInduct nm |
+    return false
+  let recVal ← getConstInfoRec (mkRecName nm)
+  return levelParams.length < recVal.levelParams.length
+
+open Lean Meta in
 partial def conversionStepNew (e : Expr) : MetaM Expr := do
   let rec visit (e : Expr) (baseMap : FVarIdMap Expr) : MonadCacheT ExprStructEq Expr MetaM Expr :=
     withTraceNode `debug (fun err => return m!"{exceptEmoji err} Transforming {e}") do
@@ -131,7 +182,11 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
       | .mvar _ => throwError "unexpected metavariable"
       | .bvar _ => throwError "unexpected bound variable"
       | .mdata m e => return .mdata m (← visit e baseMap)
-      | .proj t i e => return .proj (mkNewInductName t) i (← visit e baseMap)
+      | .proj t i e =>
+        if ← isStructureLikeWithLargeElim t then
+          return .proj (mkNewInductName t) i (← visit e baseMap)
+        else
+          conversionStepNew (← projToRec t i e)
       | .app f a => return mkApp2 (← visit f baseMap) a (← visit a baseMap)
       | .letE nm t v b nd =>
         let baseName := nm.appendAfter "_base"

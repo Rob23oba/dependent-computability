@@ -224,13 +224,17 @@ lemma New.Acc.rec.dcomp.{c, v, u} : new_type% @Acc.rec.dcomp.{c, v, u} :=
   fun _ _ _ _ _ _ _ _ _ _ _ hi _ _ _ ha _ _ => New.Acc.rec.computable hi ha
 
 @[dprim]
-theorem New.Unit.unit.computable {ctx_base : Sort u} {ctx : new_type% ctx_base} :
-    DComputable (new% fun _ : ctx_base => ()) := by
-  refine .const' (x := new% ()) ?_
+theorem New.PUnit.unit.computable.{u, v} {ctx_base : Sort u} {ctx : new_type% ctx_base} :
+    DComputable (new% fun _ : ctx_base => PUnit.unit.{v}) := by
+  refine .const' (x := new% PUnit.unit.{v}) ?_
   exact ⟨0, .zero⟩
 
-@[other_dprim] lemma Unit.unit.dcomp {ctx : Sort u} : DComp (fun _ : ctx => ()) := .unsafeIntro
-lemma New.Unit.unit.dcomp : new_type% @Unit.unit.dcomp.{u} := @New.Unit.unit.computable
+@[other_dprim] lemma PUnit.unit.dcomp.{u, v} {ctx : Sort u} :
+    DComp (fun _ : ctx => PUnit.unit.{v}) := .unsafeIntro
+lemma New.PUnit.unit.dcomp.{u, v} : new_type% @PUnit.unit.dcomp.{u, v} := @New.PUnit.unit.computable
+
+@[other_dprim] lemma Unit.unit.dcomp {ctx : Sort u} : DComp (fun _ : ctx => ()) := PUnit.unit.dcomp
+lemma New.Unit.unit.dcomp.{u} : new_type% @Unit.unit.dcomp.{u} := @New.PUnit.unit.computable
 
 example : DComputable (new% fun (x : Nat → Nat) y => x y) := by
   dcomp_tac
@@ -309,51 +313,34 @@ set_option linter.unusedVariables.funArgs false in
 lemma New.Nat.rec.dprim.{u, v} : new_type% @Nat.rec.dprim.{u, v} :=
   fun _ _ _ _ _ _ _ hz _ _ _ hs _ _ _ ht => New.Nat.rec.primrec hz hs ht
 
-@[dprim]
-theorem _root_.New.Nat.rec.computable {ctx_base : Sort u} {ctx : new_type% ctx_base}
-    {motive_base : ctx_base → ℕ → Sort v} {motive : new_type% motive_base}
-    {zero_base : (c : ctx_base) → motive_base c .zero}
-    {zero : new_type% zero_base}
-    (zero_comp : DComputable (new% zero_base))
-    {succ_base : (c : ctx_base) → (n : ℕ) → motive_base c n → motive_base c (.succ n)}
-    {succ : new_type% succ_base}
-    (succ_comp : DComputable (new% succ_base))
-    {t_base : ctx_base → ℕ} {t : new_type% t_base}
-    (t_comp : DComputable (new% t_base)) :
-    DComputable (new% fun c =>
-      @Nat.rec (motive_base c) (zero_base c) (succ_base c) (t_base c)) := by
-  have := new%
-    show (fun c => @Nat.rec (fun n => Unit → motive_base c n) (fun _ => zero_base c)
-          (fun n ih _ => succ_base c n (ih ())) (t_base c) ()) =
-        (fun c => @Nat.rec (motive_base c) (zero_base c) (succ_base c) (t_base c)) by
-      funext c; induction t_base c <;> simp_all
-  dsimp only at this
-  refine New.Eq._induct.rec (motive := fun a _ _ => DComputable a) ?_ this
-  dsimp only
-  have recComp : DComputable (new% fun x :
-      (c : ctx_base) ×' (zero : Unit → motive_base c 0) ×'
-        (succ : (n : ℕ) → (Unit → motive_base c n) →
-          Unit → motive_base c (n.succ)) ×' ℕ =>
-      @Nat.rec (fun n => Unit → motive_base x.1 n) x.2.1 x.2.2.1 x.2.2.2) := by
-    refine .of_prim ?_
-    dcomp_tac
-  have mk : DComputable (new% fun c : ctx_base =>
-      (⟨c, fun _ => zero_base c, fun n ih _ => succ_base c n (ih ()), t_base c⟩ :
-        (c : ctx_base) ×' (zero : Unit → motive_base c 0) ×'
-          (succ : (n : ℕ) → (Unit → motive_base c n) →
-            Unit → motive_base c (n.succ)) ×' ℕ)) := by
-    dcomp_tac
-  exact .comp (.app recComp New.Unit.unit.computable) mk
-
 set_option linter.unusedVariables.funArgs false in
 @[other_dprim] lemma Nat.rec.dcomp
     {ctx : Sort u} {motive : ctx → ℕ → Sort v}
     {zero : (c : ctx) → motive c .zero} (zero_comp : DComp zero)
     {succ : (c : ctx) → (n : ℕ) → motive c n → motive c (.succ n)} (succ_comp : DComp succ)
     {t : ctx → ℕ} (t_comp : DComp t) :
-    DComp fun c => @Nat.rec (motive c) (zero c) (succ c) (t c) := .unsafeIntro
-lemma New.Nat.rec.dcomp.{u, v} : new_type% @Nat.rec.dcomp.{u, v} :=
-  fun _ _ _ _ _ _ _ hz _ _ _ hs _ _ _ ht => New.Nat.rec.computable hz hs ht
+    DComp fun c => @Nat.rec (motive c) (zero c) (succ c) (t c) := by
+  have (c : ctx) : @Nat.rec (motive c) (zero c) (succ c) (t c) =
+      @Nat.rec (fun n => Unit → motive c n) (fun _ => zero c)
+        (fun n ih _ => succ c n (ih ())) (t c) () := by
+    induction t c <;> simp_all
+  rw [funext this]
+  have recComp : DComp (fun x :
+      (c : ctx) ×' (zero : Unit → motive c 0) ×'
+        (succ : (n : ℕ) → (Unit → motive c n) →
+          Unit → motive c (n.succ)) ×' ℕ =>
+      @Nat.rec (fun n => Unit → motive x.1 n) x.2.1 x.2.2.1 x.2.2.2) := by
+    refine .of_prim ?_
+    other_dcomp_tac
+  have mk : DComp (fun c : ctx =>
+      (⟨c, fun _ => zero c, fun n ih _ => succ c n (ih ()), t c⟩ :
+        (c : ctx) ×' (zero : Unit → motive c 0) ×'
+          (succ : (n : ℕ) → (Unit → motive c n) →
+            Unit → motive c (n.succ)) ×' ℕ)) := by
+    other_dcomp_tac
+  exact .comp (.app recComp Unit.unit.dcomp) mk
+
+convert_to_new Nat.rec.dcomp
 
 open Lean Meta Qq
 def insertContextType (e : Expr) (ctx : Expr) (max : Nat) (insts : Array Expr := #[]) : Expr :=
@@ -386,7 +373,7 @@ def autoDComp (name : Name) (arity : Option Nat := none) : MetaM Unit := do
       zeta := false
     }
     let rec populateContext (context : Other.Context) (i : Nat)
-        (vars : Array Expr) (infos : Array ParamComputability) :
+        (vars : Array Expr) (infos : Array Other.ParamComputability) :
         MetaM Unit := do
       if h : i < params.size then
         let param := params[i]
@@ -429,4 +416,106 @@ def autoDComp (name : Name) (arity : Option Nat := none) : MetaM Unit := do
           type := ← mkForallFVars vars result.ty
           value := ← mkLambdaFVars vars result
         }
+        let entry := {
+          prim := false
+          declName := name
+          thmName := name ++ `dcomp
+          paramInfos := infos
+        }
+        modifyEnv (Other.otherDPrimExt.addEntry · entry)
     populateContext context 0 #[ctx] #[]
+
+set_option linter.unusedVariables false in
+lemma PProd.dprim_toPSigma {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
+    DPrim (fun c => PSigma.mk (β := fun _ => β c) (self c).1 (self c).2) := .unsafeIntro
+
+set_option linter.unusedVariables false in
+lemma PProd.dprim_ofPSigma {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PSigma (fun _ : α c => β c)} (self_comp : DPrim self) :
+    DPrim (fun c => PProd.mk (self c).1 (self c).2) := .unsafeIntro
+
+set_option linter.unusedVariables false in
+lemma Nat.pair.dprim {ctx : Sort u} {a : ctx → ℕ} (ha : DPrim a) {b : ctx → ℕ} (hb : DPrim b) :
+    DPrim fun c => Nat.pair (a c) (b c) := .unsafeIntro
+
+lemma _root_.New.Nat.pair.dprim.{u} : new_type% @Nat.pair.dprim.{u} := by
+  rintro ctx_base ctx a_base a _ ⟨f, hf, hf'⟩ b_base b _ ⟨g, hg, hg'⟩
+  refine ⟨_, .pair hf hg, ?_⟩
+  intro a_base a n han
+  rw [hf' han, hg' han]
+  simp [New.Nat]
+
+lemma New.PProd.dprim_toPSigma.{u, v, w} : new_type% @PProd.dprim_toPSigma.{u, v, w} := by
+  rintro ctx_base ctx α_base α β_base β self_base self _ ⟨f, hf, hf'⟩
+  refine ⟨f, hf, ?_⟩
+  intro a_base a n han
+  specialize hf' han
+  generalize f n = fval at hf'
+  obtain ⟨hxn, hyn⟩ := hf'
+  exact ⟨by simpa using hxn, by simpa using hyn⟩
+
+lemma _root_.New.PProd.dprim_ofPSigma.{u, v, w} : new_type% @PProd.dprim_ofPSigma.{u, v, w} := by
+  rintro ctx_base ctx α_base α β_base β self_base self _ ⟨f, hf, hf'⟩
+  refine ⟨f, hf, ?_⟩
+  intro a_base a n han
+  specialize hf' han
+  generalize f n = fval at hf'
+  obtain ⟨hxn, hyn⟩ := hf'
+  rw [← Nat.pair_unpair fval]
+  constructor <;> assumption
+
+@[other_dprim]
+lemma PProd.fst.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
+    DPrim (fun c => (self c).1) :=
+  PSigma.fst.dprim (PProd.dprim_toPSigma self_comp)
+
+@[other_dprim]
+lemma PProd.fst.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DComp self) :
+    DComp (fun c => (self c).1) := by
+  refine .app (.curry (.of_prim (PProd.fst.dprim ?_))) self_comp
+  exact PSigma.snd.dprim .id
+
+@[other_dprim]
+lemma PProd.snd.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
+    DPrim (fun c => (self c).2) :=
+  PSigma.snd.dprim (PProd.dprim_toPSigma self_comp)
+
+@[other_dprim]
+lemma PProd.snd.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DComp self) :
+    DComp (fun c => (self c).2) := by
+  refine .app (.curry (.of_prim (PProd.snd.dprim ?_))) self_comp
+  exact PSigma.snd.dprim .id
+
+@[other_dprim]
+lemma PProd.mk.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {fst : (c : ctx) → α c} (fst_comp : DPrim fst)
+    {snd : (c : ctx) → β c} (snd_comp : DPrim snd) :
+    DPrim (fun c => PProd.mk (fst c) (snd c)) :=
+  PProd.dprim_ofPSigma (PSigma.mk.dprim fst_comp snd_comp)
+
+set_option linter.unusedVariables false in
+@[other_dprim]
+lemma PProd.mk.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
+    {fst : (c : ctx) → α c} (fst_comp : DComp fst)
+    {snd : (c : ctx) → β c} (snd_comp : DComp snd) :
+    DComp (fun c => PProd.mk (fst c) (snd c)) := .unsafeIntro
+
+set_option linter.unusedVariables false in
+@[other_dprim]
+lemma OfNat.ofNat.dcomp {ctx : Sort u} {α : ctx → Type v} {n : ctx → ℕ}
+    {self : (c : ctx) → OfNat (α c) (n c)} (self_comp : DComp self) :
+    DComp (fun c => (self c).ofNat) := .unsafeIntro
+
+set_option linter.unusedVariables false in
+@[other_dprim]
+lemma OfNat.mk.dcomp {ctx : Sort u} {α : ctx → Type v} {n : ctx → ℕ}
+    {ofNat : (c : ctx) → α c} (ofNat_comp : DComp ofNat) :
+    DComp (fun c => @OfNat.mk (α c) (n c) (ofNat c)) := .unsafeIntro
+
+lemma DComp.natLit {ctx : Sort u} (n : ℕ) : DComp (fun _ : ctx => n) := .unsafeIntro
+lemma DComp.strLit {ctx : Sort u} (s : String) : DComp (fun _ : ctx => s) := .unsafeIntro

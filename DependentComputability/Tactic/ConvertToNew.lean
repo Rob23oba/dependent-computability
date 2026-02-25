@@ -1,7 +1,7 @@
 import DependentComputability.SortExtra
 import DependentComputability.Tactic.Delab
 
-open Lean Meta
+open Lean Meta Qq
 @[inline]
 def withNonBaseVars (baseVars : Array Expr)
     (step : (expr type : Expr) → (baseMap : FVarIdMap Expr) →
@@ -74,7 +74,144 @@ def convertInductType (all : List Name) (e ty : Expr) (baseMap : FVarIdMap Expr)
   else
     convertTypeSimpleNew e ty baseMap
 
-partial def addNewTypeDecl (info : InductiveVal) : MetaM Unit := do
+def mkNewInductEncodingName (nm : Name) : Name :=
+  .str (mkNewName nm) "_encoding"
+
+def transformNewTypeToEncoding (e : Expr) (newVar nat : Expr) : MetaM Expr := do
+  if let mkExtraApp ty base := e then
+    return mkApp3 (.proj ``SortExtra 1 ty) base newVar nat
+  else
+    e.withApp fun fn args => do
+      let .const (.str nm "_induct") us := fn |
+        throwError "Invalid type {e}, reflexive inductives are not supported yet"
+      return mkApp2 (mkAppN (.const (.str nm "_encoding") us) args) newVar nat
+
+def toNewEncodingInductiveType (info : InductiveVal) : MetaM InductiveType := do
+  let ind := info.name
+  let levels := info.levelParams.map Level.param
+  let newInductName := mkNewInductName info.name
+  let newEncodingName := mkNewInductEncodingName info.name
+  let mut ctors : Array Constructor := #[]
+  let indType ← forallTelescopeReducing info.type fun baseVars _ => do
+    withNonBaseVars baseVars convertTypeSimpleNew fun newVars _ => do
+      let allVars := baseVars.interleave newVars
+      let body := .forallE `n Nat.mkType (.sort levelZero) .default
+      let extra := .app (mkAppN (.const newInductName levels) allVars) (.bvar 0)
+      let body := .forallE `t extra body .default
+      let body := .forallE `t_base (mkAppN (.const ind levels) baseVars) body .strictImplicit
+      mkForallFVars (baseVars.interleave newVars) body
+  let ctorCount := info.numCtors
+  for h : ctorIdx in *...ctorCount do
+    let ctor := info.ctors[ctorIdx]
+    let newCtorName := newInductName ++ ctor.replacePrefix ind .anonymous
+    let newCtorVal ← getConstInfoCtor newCtorName
+    let newCtor ← forallTelescope newCtorVal.type fun vars body => do
+      let rec go (i : Nat) (nats : Array Q(Nat)) (allVars : Array Expr) : MetaM Constructor := do
+        if h : i + 1 < vars.size then
+          let baseVar := vars[i]
+          let newVar := vars[i + 1]
+          let allVars := allVars.push baseVar |>.push newVar
+          if ← isProof baseVar then
+            return ← go (i + 2) nats allVars
+          let nm ← newVar.fvarId!.getUserName
+          withImplicitBinderInfos #[newVar] do
+          withLocalDecl (nm.appendAfter "_n") .implicit Nat.mkType fun natVar => do
+            let encType ← transformNewTypeToEncoding (← inferType newVar) newVar natVar
+            withLocalDeclD (nm.appendAfter "_enc") encType fun encVar =>
+              go (i + 2) (nats.push natVar) (allVars.push natVar |>.push encVar)
+        else
+          body.withApp fun fn args => do
+          assert! fn.isConst
+          let newCtorApp := mkAppN (.const newCtorName levels) vars
+          let encoding ← if nats.isEmpty then
+              pure (mkRawNatLit ctorIdx)
+            else
+              let last := nats.back!
+              let enc := nats.pop.foldr (mkApp2 (mkConst ``Nat.pair)) last
+              let enc := if ctorCount > 1 then
+                  mkApp2 (mkConst ``Nat.mul) enc (mkRawNatLit ctorCount)
+                else enc
+              let enc := if ctorIdx > 0 then
+                  mkApp2 (mkConst ``Nat.add) enc (mkRawNatLit ctorIdx)
+                else enc
+              pure enc
+          let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) newCtorApp encoding
+          let ctorType ← mkForallFVars allVars ctorType
+          return {
+            name := newEncodingName ++ ctor.replacePrefix ind .anonymous
+            type := ctorType
+          }
+      termination_by vars.size - i
+      let nparams := newCtorVal.numParams
+      go nparams #[] (vars.take nparams)
+    ctors := ctors.push newCtor
+  return {
+    name := newEncodingName
+    type := indType
+    ctors := ctors.toList
+  }
+
+def mkNewStructEncodingInductiveType (info : InductiveVal) : MetaM InductiveType := do
+  let ind := info.name
+  let levels := info.levelParams.map Level.param
+  let newInductName := mkNewInductName info.name
+  let newEncodingName := mkNewInductEncodingName info.name
+  let indType ← forallTelescopeReducing info.type fun baseVars _ => do
+    withNonBaseVars baseVars convertTypeSimpleNew fun newVars _ => do
+      let allVars := baseVars.interleave newVars
+      let body := .forallE `n Nat.mkType (.sort levelZero) .default
+      let extra := .app (mkAppN (.const newInductName levels) allVars) (.bvar 0)
+      let body := .forallE `t extra body .default
+      let body := .forallE `t_base (mkAppN (.const ind levels) baseVars) body .strictImplicit
+      mkForallFVars (baseVars.interleave newVars) body
+  let [ctor] := info.ctors | throwError "internal error"
+  let newCtorName := newInductName ++ ctor.replacePrefix ind .anonymous
+  let newCtorVal ← getConstInfoCtor newCtorName
+  let newCtor ← forallTelescope newCtorVal.type fun vars body => do
+    let extra := mkAppN (.const newInductName levels) (vars.take newCtorVal.numParams)
+    withLocalDecl `t .implicit extra fun textra => do
+    let fields := vars.drop newCtorVal.numParams
+    let substs : Array Expr := Array.ofFn fun i : Fin newCtorVal.numFields =>
+      .proj newInductName i textra
+    let rec go (i : Nat) (nats : Array Q(Nat)) (allVars : Array Expr) : MetaM Constructor := do
+      if h : i < vars.size then
+        let newVar := vars[i]
+        if ← isProof newVar then
+          return ← go (i + 1) nats allVars
+        let nm ← newVar.fvarId!.getUserName
+        withLocalDecl (nm.appendAfter "_n") .implicit Nat.mkType fun natVar => do
+          let projIdx := i - newCtorVal.numParams
+          let newType ← inferType newVar
+          let newType := newType.replaceFVars fields substs
+          let encType ← transformNewTypeToEncoding newType
+            (.proj newInductName projIdx textra) natVar
+          withLocalDeclD (nm.appendAfter "_enc") encType fun encVar =>
+            go (i + 1) (nats.push natVar) (allVars.push natVar |>.push encVar)
+      else
+        body.withApp fun fn args => do
+        assert! fn.isConst
+        let encoding ← if nats.isEmpty then
+            pure (mkRawNatLit 0)
+          else
+            let last := nats.back!
+            pure <| nats.pop.foldr (mkApp2 (mkConst ``Nat.pair)) last
+        let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) textra encoding
+        let ctorType ← mkForallFVars allVars ctorType
+        let ctorName := newEncodingName ++ ctor.replacePrefix ind .anonymous
+        return {
+          name := ctorName
+          type := ctorType
+        }
+    termination_by vars.size - i
+    let nparams := newCtorVal.numParams
+    go nparams #[] (vars.take nparams |>.push textra)
+  return {
+    name := newEncodingName
+    type := indType
+    ctors := [newCtor]
+  }
+
+partial def addNewTypeDecl (info : InductiveVal) (isIrrel : Bool) : MetaM Unit := do
   let ind := info.name
   let lparams' := info.levelParams.map Level.param
   let const := .const ind lparams'
@@ -86,10 +223,17 @@ partial def addNewTypeDecl (info : InductiveVal) : MetaM Unit := do
       let indTy := mkAppN const baseVars
       let u ← getLevel indTy
       let extra := mkAppN (.const (mkNewInductName ind) lparams') allVars
-      let encoding := mkApp2 (.const ``TrivialEncoding [u]) indTy extra
-      let propElim := mkApp2 (.const ``IsPropEncodingTrivial.trivialEncoding [u]) indTy extra
-      let constructor := mkApp4 (.const ``SortExtra.mk [u]) indTy extra encoding propElim
-      mkLambdaFVars allVars constructor
+      if isIrrel then
+        let encoding := mkApp2 (.const ``TrivialEncoding [u]) indTy extra
+        let propElim := mkApp2 (.const ``IsPropEncodingTrivial.trivialEncoding [u]) indTy extra
+        let constructor := mkApp4 (.const ``SortExtra.mk [u]) indTy extra encoding propElim
+        mkLambdaFVars allVars constructor
+      else
+        let encName := mkNewInductEncodingName info.name
+        let encoding := mkAppN (.const encName lparams') allVars
+        let propElim := mkApp3 (.const ``IsPropEncodingTrivial.univElim [u]) indTy extra encoding
+        let constructor := mkApp4 (.const ``SortExtra.mk [u]) indTy extra encoding propElim
+        mkLambdaFVars allVars constructor
   addDecl <| .defnDecl {
     name := mkNewName ind
     levelParams := info.levelParams
@@ -116,7 +260,7 @@ partial def addNewCtorDecls (info : InductiveVal) : MetaM Unit := do
       type := newType'
       value := newValue
       hints := .abbrev
-      safety := .safe
+      safety := if info.isUnsafe then .unsafe else .safe
     }
 
 partial def addNewRecursor (ind : Name) (info : RecursorVal) (recNames : Array Name) :
@@ -194,7 +338,7 @@ partial def addNewRecursor (ind : Name) (info : RecursorVal) (recNames : Array N
     type := newType'
     value := newValue
     hints := .abbrev
-    safety := .safe
+    safety := if info.isUnsafe then .unsafe else .safe
   }
 
 def convertStructCtorType (ind : Name) (e : Expr) (ctorType : Expr) (baseMap : FVarIdMap Expr) :
@@ -246,31 +390,24 @@ def mkNewStructRecursor (rec : RecursorVal) (ctor : ConstructorVal) : MetaM Unit
       type := newRecType
       value := value
       hints := .abbrev
-      safety := .safe
+      safety := if rec.isUnsafe then .unsafe else .safe
     }
 
-mutual
-
-partial def convertStructureType (info : InductiveVal) : MetaM Unit := do
+def convertStructureType (info : InductiveVal) (isIrrel : Bool) : MetaM Unit := do
   let ind := info.name
   let lparams' := info.levelParams.map Level.param
-  for c in info.type.getUsedConstantsAsSet do
-    recConvertToNew c
   let indType ← forallTelescopeReducing info.type fun baseVars body => do
     withNonBaseVars baseVars convertTypeSimpleNew fun newVars _ => do
-      let body := .forallE `t (mkAppN (.const ind lparams') baseVars) body .default
+      let body := .forallE `t_base (mkAppN (.const ind lparams') baseVars) body .default
       mkForallFVars (baseVars.interleave newVars) body
   let newName := mkNewInductName info.name
   let ctor := info.ctors[0]!
   let newCtorName := newName ++ ctor.replacePrefix ind .anonymous
   let ctor ← getConstInfoCtor ctor
-  for c in ctor.type.getUsedConstantsAsSet do
-    if c != ind then
-      recConvertToNew c
   let ctorType ← forallTelescopeReducing info.type fun baseVars _ => do
     withNonBaseVars baseVars convertTypeSimpleNew fun newVars baseMap => do
       let indVarType := mkAppN (.const ind lparams') baseVars
-      withLocalDeclD `t indVarType fun indVar => do
+      withLocalDeclD `t_base indVarType fun indVar => do
         let ctorType ← instantiateForall ctor.type baseVars
         let ctorType ← convertStructCtorType ind indVar ctorType baseMap
         mkForallFVars (baseVars.interleave newVars |>.push indVar) ctorType
@@ -284,7 +421,11 @@ partial def convertStructureType (info : InductiveVal) : MetaM Unit := do
   }
   addDecl <| .inductDecl info.levelParams (info.numParams * 2 + 1) [indType] info.isUnsafe
   mkCasesOn newName
-  addNewTypeDecl info
+  unless isIrrel do
+    let ty ← mkNewStructEncodingInductiveType info
+    addDecl <| .inductDecl info.levelParams (info.numParams * 2 + 2) [ty] info.isUnsafe
+    mkCasesOn (mkNewInductEncodingName info.name)
+  addNewTypeDecl info isIrrel
   let const := .const ctor.name lparams'
   let newType ← conversionStepNew ctor.type
   let newType' : Expr := .app (.proj ``SortExtra 0 newType) const
@@ -302,19 +443,17 @@ partial def convertStructureType (info : InductiveVal) : MetaM Unit := do
     type := newType'
     value := newValue
     hints := .abbrev
-    safety := .safe
+    safety := if info.isUnsafe then .unsafe else .safe
   }
   let rec ← getConstInfoRec (mkRecName info.name)
   mkNewStructRecursor rec ctor
 
-partial def toNewInductiveType (info : InductiveVal) : MetaM InductiveType := do
+def toNewInductiveType (info : InductiveVal) : MetaM InductiveType := do
   if info.isNested then
     throwError "nested {info.name} not supported"
   let ind := info.name
   let all := info.all
   let lparams' := info.levelParams.map Level.param
-  for c in info.type.getUsedConstantsAsSet do
-    recConvertToNew c
   let indType ← forallTelescopeReducing info.type fun baseVars body => do
     withNonBaseVars baseVars convertTypeSimpleNew fun newVars _ => do
       let body := .forallE `t (mkAppN (.const ind lparams') baseVars) body .default
@@ -324,9 +463,6 @@ partial def toNewInductiveType (info : InductiveVal) : MetaM InductiveType := do
   for ctor in info.ctors do
     let newCtorName := newName ++ ctor.replacePrefix ind .anonymous
     let ctor ← getConstInfoCtor ctor
-    for c in ctor.type.getUsedConstantsAsSet do
-      unless all.contains c do
-        recConvertToNew c
     let ctorType ← forallTelescopeReducing ctor.type fun baseVars body => do
       withNonBaseVars baseVars (convertInductType all) fun newVars baseMap => do
         let ctorApp := mkAppN (.const ctor.name lparams') baseVars
@@ -343,27 +479,49 @@ partial def toNewInductiveType (info : InductiveVal) : MetaM InductiveType := do
     ctors := ctors.toList
   }
 
+mutual
+
 partial def convertInductToNew (val : InductiveVal) : MetaM Unit := do
-  if let [_] := val.ctors then
-    unless val.isRec do
-      if val.numIndices = 0 then
-        let recVal ← getConstInfoRec (mkRecName val.name)
-        if recVal.levelParams.length > val.levelParams.length then
-          convertStructureType val
-          return
   let all := val.all
   let lparams := val.levelParams
   let nparams := val.numParams
   let recNames := all.toArray.map mkRecName
   let mut types : Array InductiveType := #[]
   for ind in all do
+    let info ← getConstInfoInduct ind
+    for c in info.type.getUsedConstantsAsSet do
+      recConvertToNew c
+    for ctor in info.ctors do
+      let ctor ← getConstInfoCtor ctor
+      for c in ctor.type.getUsedConstantsAsSet do
+        unless all.contains c do
+          recConvertToNew c
+  let lvl ← forallTelescopeReducing (whnfType := true) val.type fun _ body => do
+    let .sort u := body | throwTypeExpected body
+    pure u
+  if let [_] := val.ctors then
+    unless val.isRec do
+      if val.numIndices = 0 then
+        let recVal ← getConstInfoRec (mkRecName val.name)
+        if val.levelParams.length < recVal.levelParams.length then
+          convertStructureType val (!lvl.isNeverZero)
+          return
+  for ind in all do
     types := types.push (← toNewInductiveType (← getConstInfoInduct ind))
   let decl : Declaration := .inductDecl lparams (nparams * 2) types.toList val.isUnsafe
   addDecl decl
+  if lvl.isNeverZero then
+    let mut encTypes : Array InductiveType := #[]
+    for ind in all do
+      encTypes := encTypes.push (← toNewEncodingInductiveType (← getConstInfoInduct ind))
+    let decl : Declaration := .inductDecl lparams (nparams * 2) encTypes.toList val.isUnsafe
+    addDecl decl
   for ind in all do
     mkCasesOn (mkNewInductName ind)
+    if lvl.isNeverZero then
+      mkCasesOn (mkNewInductEncodingName ind)
     let info ← getConstInfoInduct ind
-    addNewTypeDecl info
+    addNewTypeDecl info (!lvl.isNeverZero)
   for ind in all do
     let info ← getConstInfoInduct ind
     addNewCtorDecls info

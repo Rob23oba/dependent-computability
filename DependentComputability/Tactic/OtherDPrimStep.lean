@@ -339,6 +339,14 @@ def withHaveDeclQ [MonadControlT MetaM n] [Monad n]
     (k : (var : Q($type)) → n α) : n α :=
   withLetDecl name type val k (nondep := true)
 
+def getRawForallArity (e : Expr) : Nat :=
+  go e 0
+where
+  go (e : Expr) (acc : Nat) : Nat :=
+    match e with
+    | .forallE _ _ b _ => go b (acc + 1)
+    | _ => acc
+
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     {ctx : Q(Sort clvl)} {res : Q($ctx → Sort rlvl)} (f : Q((a : $ctx) → $res a)) :
@@ -466,16 +474,19 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
         throwError "invalid over-application in primrec goal: \
           expected at most {thm.paramInfos.size} arguments but found {args.size} in\
           {indentExpr <| b.instantiate1 var}"
+  let mut b := mkAppN fn (args.take thm.paramInfos.size)
   let mut type ←
     withLocalDeclQ nm bi q($ctx) fun var => do
-      let mut type ← inferType ((mkAppN fn (args.take thm.paramInfos.size)).instantiate1 var)
-      if type.getForallArity < args.size - thm.paramInfos.size then
+      let mut type ← inferType (b.instantiate1 var)
+      if getRawForallArity type < args.size - thm.paramInfos.size then
         type ← liftM <| forallBoundedTelescope type (some (args.size - thm.paramInfos.size))
             mkForallFVars
       return type.abstract #[var]
-  let mut b := mkAppN fn (args.take thm.paramInfos.size)
   for arg in args[thm.paramInfos.size...*] do
-    let .forallE nm' t' b' bi' := id type | throwError "error"
+    let .forallE nm' t' b' bi' := id type |
+      withLocalDecl nm bi ctx fun var =>
+        throwError "function expected at{indentExpr (b.instantiate1 var)}\n\
+          but found type{indentExpr (type.instantiate1 var)}"
     let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
     let b'lvl ← withLocalDecl nm bi ctx fun var =>
       withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>

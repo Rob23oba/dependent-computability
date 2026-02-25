@@ -23,6 +23,7 @@ partial def convertBackFromNew (e : Expr) : OptionT MetaM Expr := do
     if nm = `Sort then
       let [u] := us | failure
       return .sort u
+    unless (← getEnv).contains nm do failure
     return .const nm us
   | .app .. =>
     e.withApp fun fn args => do
