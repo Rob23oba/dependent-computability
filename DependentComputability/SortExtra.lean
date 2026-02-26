@@ -231,6 +231,7 @@ def populateBaseMap : MetaM (FVarIdMap Expr) := do
   let mut baseMap : FVarIdMap Expr := {}
   for decl in lctx do
     let type := decl.type
+    let type ← instantiateMVars type
     let mkExtraApp _ty (.fvar baseVar) := type | continue
     baseMap := baseMap.insert baseVar decl.toExpr
   return baseMap
@@ -238,12 +239,19 @@ def populateBaseMap : MetaM (FVarIdMap Expr) := do
 open Lean Elab Term in
 elab tk:"new% " t:term : term => do
   let expectedType? : Option Expr := ‹_›
-  let expr ← elabTerm t none
+  let mut eTy : Option Expr := none
+  if let some expTy := expectedType? then
+    let expTy ← instantiateMVars expTy
+    if let mkExtraApp ty val := expTy then
+      eTy ← Meta.inferType val
+  let expr ← elabTerm t eTy
   synthesizeSyntheticMVarsNoPostponing
   let expr ← instantiateMVars expr
   let baseMap ← populateBaseMap
   if expr.hasAnyFVar (not ∘ baseMap.contains) then
-    throwErrorAt tk "expression has free variables"
+    let some a := expr.find? (fun | .fvar f => !baseMap.contains f | _ => false) |
+      throwErrorAt tk "expression has free variables"
+    throwErrorAt tk "Invalid unresolved free variable {a} in{indentExpr expr}"
   if expr.hasMVar then
     throwErrorAt tk "expression has metavariables:{indentExpr expr}"
   for const in expr.getUsedConstantsAsSet do
@@ -267,9 +275,11 @@ elab tk:"new_type% " t:term : term => do
   let type ← instantiateMVars type
   let baseMap ← populateBaseMap
   if type.hasAnyFVar (not ∘ baseMap.contains) then
-    throwErrorAt tk "expression has free variables"
+    let some a := type.find? (fun | .fvar f => !baseMap.contains f | _ => false) |
+      throwErrorAt tk "expression has free variables"
+    throwErrorAt tk "Invalid unresolved free variable {a} in{indentExpr type}"
   if type.hasMVar then
-    throwErrorAt tk "expression has metavariables"
+    throwErrorAt tk "expression has metavariables:{indentExpr expr}"
   for const in type.getUsedConstantsAsSet do
     unless (← getEnv).contains (mkNewName const) do
       let converter ← declConverterRef.get

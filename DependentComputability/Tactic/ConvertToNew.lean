@@ -124,16 +124,14 @@ def toNewEncodingInductiveType (info : InductiveVal) : MetaM InductiveType := do
           assert! fn.isConst
           let newCtorApp := mkAppN (.const newCtorName levels) vars
           let encoding ← if nats.isEmpty then
-              pure (mkRawNatLit ctorIdx)
+              pure (mkRawNatLit (ctorIdx + 1))
             else
-              let last := nats.back!
-              let enc := nats.pop.foldr (mkApp2 (mkConst ``Nat.pair)) last
+              let first := nats[0]!
+              let enc := nats.foldl (mkApp2 (mkConst ``Nat.pair)) first (start := 1)
               let enc := if ctorCount > 1 then
                   mkApp2 (mkConst ``Nat.mul) enc (mkRawNatLit ctorCount)
                 else enc
-              let enc := if ctorIdx > 0 then
-                  mkApp2 (mkConst ``Nat.add) enc (mkRawNatLit ctorIdx)
-                else enc
+              let enc := mkApp2 (mkConst ``Nat.add) enc (mkRawNatLit (ctorIdx + 1))
               pure enc
           let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) newCtorApp encoding
           let ctorType ← mkForallFVars allVars ctorType
@@ -193,8 +191,8 @@ def mkNewStructEncodingInductiveType (info : InductiveVal) : MetaM InductiveType
         let encoding ← if nats.isEmpty then
             pure (mkRawNatLit 0)
           else
-            let last := nats.back!
-            pure <| nats.pop.foldr (mkApp2 (mkConst ``Nat.pair)) last
+            let first := nats[0]!
+            pure <| nats.foldl (mkApp2 (mkConst ``Nat.pair)) first (start := 1)
         let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) textra encoding
         let ctorType ← mkForallFVars allVars ctorType
         let ctorName := newEncodingName ++ ctor.replacePrefix ind .anonymous

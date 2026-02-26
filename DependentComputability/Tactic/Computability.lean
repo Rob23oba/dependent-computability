@@ -247,10 +247,7 @@ example : DComputable (new% fun (x : Nat → (_ : Nat) ×' Nat) y => x (x y).2) 
 
 @[dprim]
 theorem _root_.New.Nat.zero.computable {ctx_base : Sort u} {ctx : new_type% ctx_base} :
-    DComputable (new% fun _ : ctx_base => Nat.zero) := by
-  refine .const' (x := new% Nat.zero) ?_
-  refine ⟨0, ?_⟩
-  rfl
+    DComputable (new% fun _ : ctx_base => Nat.zero) := .const' (x := new% Nat.zero) ⟨0, rfl⟩
 
 @[other_dprim] lemma Nat.zero.dcomp {ctx : Sort u} : DComp (fun _ : ctx => Nat.zero) := .unsafeIntro
 lemma New.Nat.zero.dcomp : new_type% @Nat.zero.dcomp.{u} := @New.Nat.zero.computable
@@ -349,6 +346,7 @@ def insertContextType (e : Expr) (ctx : Expr) (max : Nat) (insts : Array Expr :=
     let t := t.instantiate insts
     let newInst := .app (.bvar (insts.size + 1)) (.bvar 0)
     .lam nm (.forallE `c ctx t .default) (insertContextType b ctx max (insts.push newInst)) bi
+  | max + 1, .mdata _ e => insertContextType e ctx max insts
   | _, t =>
     let t := t.instantiate insts
     .forallE `c ctx t .default
@@ -439,83 +437,300 @@ set_option linter.unusedVariables false in
 lemma Nat.pair.dprim {ctx : Sort u} {a : ctx → ℕ} (ha : DPrim a) {b : ctx → ℕ} (hb : DPrim b) :
     DPrim fun c => Nat.pair (a c) (b c) := .unsafeIntro
 
-lemma _root_.New.Nat.pair.dprim.{u} : new_type% @Nat.pair.dprim.{u} := by
-  rintro ctx_base ctx a_base a _ ⟨f, hf, hf'⟩ b_base b _ ⟨g, hg, hg'⟩
-  refine ⟨_, .pair hf hg, ?_⟩
-  intro a_base a n han
-  rw [hf' han, hg' han]
-  simp [New.Nat]
+structure TheoremBuilder.{c} {prectx_base : Sort u} (prectx : new_type% prectx_base) where
+  In (pre_base : prectx_base) (pre : new_type% pre_base) (n : ℕ) : Prop
+  OutPrim (ctx_base : Sort c) (ctx : new_type% ctx_base)
+      (pre_base : ctx_base → prectx_base) (pre : new_type% pre_base) : Prop
+  OutComp (ctx_base : Sort c) (ctx : new_type% ctx_base)
+      (pre_base : ctx_base → prectx_base) (pre : new_type% pre_base) : Prop
+  in_implies_outPrim (ctx_base : Sort c) (ctx : new_type% ctx_base)
+      (pre_base : ctx_base → prectx_base) (pre : new_type% pre_base)
+      (g : ℕ → ℕ) (hg : Nat.Primrec g)
+      (h : ∀ ⦃c_base c c_n⦄, ctx.2 c c_n → In (pre_base c_base) (pre c) (g c_n)) :
+      OutPrim ctx_base ctx pre_base pre
+  in_implies_outComp (ctx_base : Sort c) (ctx : new_type% ctx_base)
+      (pre_base : ctx_base → prectx_base) (pre : new_type% pre_base)
+      (g : ℕ →. ℕ) (hg : Nat.Partrec g)
+      (h : ∀ ⦃c_base c c_n⦄, ctx.2 c c_n → ∃ m ∈ g c_n, In (pre_base c_base) (pre c) m) :
+      OutComp ctx_base ctx pre_base pre
 
-lemma New.PProd.dprim_toPSigma.{u, v, w} : new_type% @PProd.dprim_toPSigma.{u, v, w} := by
-  rintro ctx_base ctx α_base α β_base β self_base self _ ⟨f, hf, hf'⟩
-  refine ⟨f, hf, ?_⟩
-  intro a_base a n han
-  specialize hf' han
-  generalize f n = fval at hf'
-  obtain ⟨hxn, hyn⟩ := hf'
-  exact ⟨by simpa using hxn, by simpa using hyn⟩
+theorem TheoremBuilder.primResult (t : @TheoremBuilder Unit (new% Unit)) (h : t.In _ (new% ()) 0) :
+    ∀ {ctx_base : Sort c} {ctx : new_type% ctx_base},
+      t.OutPrim ctx_base ctx _ (new% fun _ : ctx_base => ()) := by
+  intro ctx_base ctx
+  exact t.in_implies_outPrim ctx_base ctx _ _ _ .zero fun _ _ _ _ => h
 
-lemma _root_.New.PProd.dprim_ofPSigma.{u, v, w} : new_type% @PProd.dprim_ofPSigma.{u, v, w} := by
-  rintro ctx_base ctx α_base α β_base β self_base self _ ⟨f, hf, hf'⟩
-  refine ⟨f, hf, ?_⟩
-  intro a_base a n han
-  specialize hf' han
-  generalize f n = fval at hf'
-  obtain ⟨hxn, hyn⟩ := hf'
-  rw [← Nat.pair_unpair fval]
-  constructor <;> assumption
+theorem TheoremBuilder.compResult (t : @TheoremBuilder Unit (new% Unit)) (h : t.In _ (new% ()) 0) :
+    ∀ {ctx_base : Sort c} {ctx : new_type% ctx_base},
+      t.OutComp ctx_base ctx _ (new% fun _ : ctx_base => ()) := by
+  intro ctx_base ctx
+  exact t.in_implies_outComp ctx_base ctx _ _ _ .zero fun _ _ _ _ => ⟨0, ⟨⟨⟩, rfl⟩, h⟩
 
-@[other_dprim]
-lemma PProd.fst.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
-    DPrim (fun c => (self c).1) :=
-  PSigma.fst.dprim (PProd.dprim_toPSigma self_comp)
+def TheoremBuilder.base.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
+    {α_base : prectx_base → Sort v} (α : new_type% α_base)
+    {f_base : (c : prectx_base) → α_base c} (f : new_type% f_base) :
+    TheoremBuilder.{c} (new% prectx_base) where
+  In _ pre n := (α pre).2 (f pre) n
+  OutPrim _ _ pre_base _ := DPrimrec (new% fun a => f_base (pre_base a))
+  OutComp _ _ pre_base _ := DComputable (new% fun a => f_base (pre_base a))
+  in_implies_outPrim _ _ _ _ pre_n prim hin := ⟨pre_n, prim, @hin⟩
+  in_implies_outComp _ _ _ _ pre_n comp hin := ⟨pre_n, comp, @hin⟩
 
-@[other_dprim]
-lemma PProd.fst.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DComp self) :
-    DComp (fun c => (self c).1) := by
-  refine .app (.curry (.of_prim (PProd.fst.dprim ?_))) self_comp
-  exact PSigma.snd.dprim .id
+def TheoremBuilder.baseTransformed.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
+    {α_base : prectx_base → Sort v} (α : new_type% α_base)
+    {f_base : (c : prectx_base) → α_base c} (f : new_type% f_base)
+    (g : ℕ → ℕ) (hg : Nat.Primrec g) :
+    TheoremBuilder.{c} (new% prectx_base) where
+  In _ pre n := (α pre).2 (f pre) (g n)
+  OutPrim _ _ pre_base _ := DPrimrec (new% fun a => f_base (pre_base a))
+  OutComp _ _ pre_base _ := DComputable (new% fun a => f_base (pre_base a))
+  in_implies_outPrim _ _ _ _ pre_n prim hin := ⟨_, hg.comp prim, hin⟩
+  in_implies_outComp _ _ _ _ pre_n comp hin := ⟨_, .comp (.of_primrec hg) comp, by simpa using hin⟩
 
-@[other_dprim]
-lemma PProd.snd.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
-    DPrim (fun c => (self c).2) :=
-  PSigma.snd.dprim (PProd.dprim_toPSigma self_comp)
+theorem primrec_mul_add (a b : ℕ) : Nat.Primrec (fun n => Nat.add (Nat.mul n a) b) := by
+  simpa using Nat.Primrec.comp .add (.pair (.comp .mul (.pair .id (.const a))) (.const b))
 
-@[other_dprim]
-lemma PProd.snd.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DComp self) :
-    DComp (fun c => (self c).2) := by
-  refine .app (.curry (.of_prim (PProd.snd.dprim ?_))) self_comp
-  exact PSigma.snd.dprim .id
+def TheoremBuilder.prepend.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
+    {α_base : prectx_base → Sort v} {α : new_type% α_base}
+    (h : TheoremBuilder.{c} (new% (a : prectx_base) ×' α_base a)) :
+    TheoremBuilder.{c} (new% prectx_base) where
+  In pre_base pre n :=
+    ∀ a_base : α_base pre_base, ∀ a : new_type% a_base, ∀ a_n : ℕ, (α pre).2 a a_n →
+      h.In _ (new% PSigma.mk pre_base a_base) (Nat.pair n a_n)
+  OutPrim ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base, DPrimrec a →
+      h.OutPrim ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  OutComp ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base, DComputable a →
+      h.OutComp ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  in_implies_outPrim ctx_base ctx pre_base pre pre_n prim hin := by
+    intro a_base a ⟨g, hg, hg'⟩
+    refine h.in_implies_outPrim ctx_base ctx _ _ _ (prim.pair hg) ?_
+    intro c_base c cn hcn
+    exact hin hcn (a_base c_base) (a c) (g cn) (hg' hcn)
+  in_implies_outComp ctx_base ctx pre_base pre pre_n comp hin := by
+    intro a_base a ⟨g, hg, hg'⟩
+    refine h.in_implies_outComp ctx_base ctx _ _ _ (comp.pair hg) ?_
+    intro c_base c cn hcn
+    obtain ⟨m, hm, hm'⟩ := hg' hcn
+    obtain ⟨k, hk, hk'⟩ := hin hcn
+    simpa [Seq.seq, Part.eq_some_iff.mpr hm, Part.eq_some_iff.mpr hk]
+      using hk' (a_base c_base) (a c) m hm'
 
-@[other_dprim]
-lemma PProd.mk.dprim {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {fst : (c : ctx) → α c} (fst_comp : DPrim fst)
-    {snd : (c : ctx) → β c} (snd_comp : DPrim snd) :
-    DPrim (fun c => PProd.mk (fst c) (snd c)) :=
-  PProd.dprim_ofPSigma (PSigma.mk.dprim fst_comp snd_comp)
+def TheoremBuilder.prependIrrelevant.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
+    {α_base : prectx_base → Sort v} {α : new_type% α_base}
+    (h : TheoremBuilder.{c} (new% (a : prectx_base) ×' α_base a)) :
+    TheoremBuilder.{c} (new% prectx_base) where
+  In pre_base pre n :=
+    ∀ a_base : α_base pre_base, ∀ a : new_type% a_base,
+      h.In _ (new% PSigma.mk pre_base a_base) n
+  OutPrim ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base,
+      h.OutPrim ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  OutComp ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base,
+      h.OutComp ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  in_implies_outPrim ctx_base ctx pre_base pre pre_n prim hin := by
+    intro a_base a
+    refine h.in_implies_outPrim ctx_base ctx _ _ _ prim ?_
+    intro c_base c cn hcn
+    exact hin hcn (a_base c_base) (a c)
+  in_implies_outComp ctx_base ctx pre_base pre pre_n comp hin := by
+    intro a_base a
+    apply h.in_implies_outComp ctx_base ctx _ _ _ comp ?_
+    intro c_base c cn hcn
+    obtain ⟨k, hk, hk'⟩ := hin hcn
+    exact ⟨k, hk, hk' (a_base c_base) (a c)⟩
 
-set_option linter.unusedVariables false in
-@[other_dprim]
-lemma PProd.mk.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {fst : (c : ctx) → α c} (fst_comp : DComp fst)
-    {snd : (c : ctx) → β c} (snd_comp : DComp snd) :
-    DComp (fun c => PProd.mk (fst c) (snd c)) := .unsafeIntro
+def TheoremBuilder.prependFirst.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
+    {α_base : prectx_base → Sort v} {α : new_type% α_base}
+    (h : TheoremBuilder.{c} (new% (a : prectx_base) ×' α_base a)) :
+    TheoremBuilder.{c} (new% prectx_base) where
+  In pre_base pre n :=
+    ∀ a_base : α_base pre_base, ∀ a : new_type% a_base, ∀ a_n : ℕ, (α pre).2 a a_n →
+      h.In _ (new% PSigma.mk pre_base a_base) a_n
+  OutPrim ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base, DPrimrec a →
+      h.OutPrim ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  OutComp ctx_base ctx pre_base _pre :=
+    ∀ a_base : (c : ctx_base) → α_base (pre_base c), ∀ a : new_type% a_base, DComputable a →
+      h.OutComp ctx_base ctx _ (new% fun c : ctx_base => PSigma.mk (pre_base c) (a_base c))
+  in_implies_outPrim ctx_base ctx pre_base pre pre_n prim hin := by
+    intro a_base a ⟨g, hg, hg'⟩
+    refine h.in_implies_outPrim ctx_base ctx _ _ _ hg ?_
+    intro c_base c cn hcn
+    exact hin hcn (a_base c_base) (a c) (g cn) (hg' hcn)
+  in_implies_outComp ctx_base ctx pre_base pre pre_n comp hin := by
+    intro a_base a ⟨g, hg, hg'⟩
+    refine h.in_implies_outComp ctx_base ctx _ _ _ hg ?_
+    intro c_base c cn hcn
+    obtain ⟨m, hm, hm'⟩ := hg' hcn
+    obtain ⟨k, hk, hk'⟩ := hin hcn
+    simpa [Seq.seq, Part.eq_some_iff.mpr hm, Part.eq_some_iff.mpr hk]
+      using hk' (a_base c_base) (a c) m hm'
 
-set_option linter.unusedVariables false in
-@[other_dprim]
-lemma OfNat.ofNat.dcomp {ctx : Sort u} {α : ctx → Type v} {n : ctx → ℕ}
-    {self : (c : ctx) → OfNat (α c) (n c)} (self_comp : DComp self) :
-    DComp (fun c => (self c).ofNat) := .unsafeIntro
+partial def makeTheoremBuilder {α_base : Q(Sort u)} {α : Q(new_type% $α_base)}
+    {β_base : Q($α_base → Sort v)} {β : Q(new_type% $β_base)}
+    {f_base : Q((a : $α_base) → $β_base a)} (f : Q(new_type% $f_base))
+    (g : Q(ℕ → ℕ)) (hg : Q(Nat.Primrec $g)) (hadRelevant : Bool)
+    (remainingParams : Nat) (clvl : Level) : MetaM Q(TheoremBuilder.{clvl} $α) := do
+  let .lam nm_base _ b_base bi_base := id β_base | unreachable!
+  let .forallE nnnn dom_base body_base bbbiii := id b_base |
+    if g == q(id) then
+      return q(.base $β $f)
+    else
+      return q(.baseTransformed $β $f $g $hg)
+  let .lam nm _ (.lam nm' ttt b bi') bi := id β | unreachable!
+  let mkApp4 (.const ``New.Forall [w₁, w₂]) _ dom _ body := id b | unreachable!
+  --
+  let newLam (x : Expr) : Expr := .lam nm α_base (.lam nm' ttt x bi) bi'
+  have dom_base_lam : Q($α_base → Sort w₁) := .lam nm_base α_base dom_base bi_base
+  have _dom_lam : Q(new_type% $dom_base_lam) := newLam dom
+  have body_base_lam : Q((a : $α_base) → $dom_base_lam a → Sort w₂) :=
+    .lam nm_base α_base (.lam nnnn dom_base body_base bbbiii) bi_base
+  have _body_lam : Q(new_type% $body_base_lam) := newLam body
+  have : v =QL imax w₁ w₂ := ⟨⟩
+  have : $β_base =Q fun c => ∀ x : $dom_base_lam c, $body_base_lam c x := ⟨⟩
+  have : $β =Q new% fun c => ∀ x : $dom_base_lam c, $body_base_lam c x := ⟨⟩
+  let isRelevant := remainingParams == 0 && !w₁.isAlwaysZero
+  let res : Q(TheoremBuilder.{clvl} (new% PSigma $dom_base_lam)) ←
+    makeTheoremBuilder q(new% fun x : PSigma $dom_base_lam => $f_base x.1 x.2)
+      q($g) q($hg) (hadRelevant || isRelevant) (remainingParams - 1) clvl
+  if isRelevant then
+    if hadRelevant then
+      return q(.prepend $res)
+    else
+      return q(.prependFirst $res)
+  else
+    return q(.prependIrrelevant $res)
 
-set_option linter.unusedVariables false in
-@[other_dprim]
-lemma OfNat.mk.dcomp {ctx : Sort u} {α : ctx → Type v} {n : ctx → ℕ}
-    {ofNat : (c : ctx) → α c} (ofNat_comp : DComp ofNat) :
-    DComp (fun c => @OfNat.mk (α c) (n c) (ofNat c)) := .unsafeIntro
+def makeCtorEncodingProof (ctor : ConstructorVal) (isStruct : Bool) (levels : List Level) :
+    MetaM Expr := do
+  let shortName := ctor.name.replacePrefix ctor.induct .anonymous
+  unless isStruct do
+    return .const (mkNewInductEncodingName ctor.induct ++ shortName) levels
+  forallTelescope ctor.type fun vars _body => do
+  withNonBaseVars vars convertTypeSimpleNew fun newVars _baseMap => do
+    let params := vars.take ctor.numParams
+    let newParams := newVars.take ctor.numParams
+    let allParams := params.interleave newParams
+    let rec go (i : Nat) (allVars : Array Expr) (encs : Array Expr) : MetaM Expr := do
+      if h : i < vars.size then
+        let var := vars[i]
+        let newVar := newVars[i]!
+        let allVars := allVars.push var |>.push newVar
+        if ← isProof var then
+          return ← go (i + 1) allVars encs
+        let decl ← newVar.fvarId!.getDecl
+        let name := decl.userName
+        let mkExtraApp ty _ := decl.type | unreachable!
+        withLocalDeclD (name.appendAfter "_n") q(ℕ) fun n => do
+        let encType := mkApp3 (.proj ``SortExtra 1 ty) var newVar n
+        withLocalDeclD (name.appendAfter "_enc") encType fun enc => do
+          go (i + 1) (allVars.push n |>.push enc) (encs.push n |>.push enc)
+      else
+        let ctorApp := mkAppN (.const ctor.name levels) vars
+        let newCtorName := mkNewInductName ctor.induct ++ shortName
+        let newCtorApp := mkAppN (.const newCtorName levels) allParams
+        let newCtorApp := mkAppN (newCtorApp.app ctorApp) (newVars.drop ctor.numParams)
+        let encodingCtorName := mkNewInductEncodingName ctor.induct ++ shortName
+        let proof := mkAppN (.const encodingCtorName levels) allParams
+        let proof := mkApp2 proof ctorApp newCtorApp
+        mkLambdaFVars allVars (mkAppN proof encs)
+    go ctor.numParams allParams #[]
 
-lemma DComp.natLit {ctx : Sort u} (n : ℕ) : DComp (fun _ : ctx => n) := .unsafeIntro
-lemma DComp.strLit {ctx : Sort u} (s : String) : DComp (fun _ : ctx => s) := .unsafeIntro
+open DPrimrec.Tactic in
+def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
+  recConvertToNew ctorName
+  let ctor ← getConstInfoCtor ctorName
+  let ind ← getConstInfoInduct ctor.induct
+  let ctxUniv := Elab.Term.mkFreshLevelName ctor.levelParams
+  have ctxLvl := .param ctxUniv
+  let ctorLvl ← getLevel ctor.type
+  if ctorLvl.isAlwaysZero then
+    return
+  let isStruct := ind.ctors matches [_] && ind.numIndices == 0 && !ind.isRec
+  have ctorType : Q(Sort ctorLvl) := ctor.type
+  let _ctorTypeNew : Q(new_type% $ctorType) ← conversionStepNew ctorType
+  have levels := ctor.levelParams.map Level.param
+  have val : Q($ctorType) := .const ctor.name levels
+  have _valNew : Q(new_type% $val) := .const (mkNewName ctor.name) levels
+  have factor : Q(ℕ) := mkRawNatLit ind.numCtors
+  have off : Q(ℕ) := mkRawNatLit (ctor.cidx + 1)
+  have ⟨f, hf⟩ : (f : Q(ℕ → ℕ)) × Q(Nat.Primrec $f) :=
+    if isStruct then ⟨q(id), q(.id)⟩ else ⟨_, q(primrec_mul_add $factor $off)⟩
+  -- Build the theorem builder
+  let builder ← makeTheoremBuilder q(new% fun _ : Unit => $val) q($f) q($hf)
+    (hadRelevant := false) ctor.numParams ctxLvl
+  let input : Q(($builder).In () (new% ()) 0) ← makeCtorEncodingProof ctor isStruct levels
+  withLocalDeclQ `ctx .implicit q(Sort ctxLvl) fun ctx =>
+  withLocalDeclQ `ctx_extra .implicit q(new_type% $ctx) fun ctx' =>
+    let e := insertContextType ctorType ctx ctorType.getForallArity
+    lambdaTelescope e fun vars body => do
+      let rec go (prim : Bool) (i : Nat) (proof : Expr)
+          (allVars : Array Expr) (allNewVars : Array Expr)
+          (nparams : Nat) (comps : Array Other.ParamComputability)
+          (baseMap : FVarIdMap Expr) :
+          MonadCacheT ExprStructEq Expr MetaM Unit := do
+        if h : i < vars.size then
+          let var := vars[i]
+          let decl ← var.fvarId!.getDecl
+          let varNm := decl.userName
+          let type := decl.type
+          withImplicitBinderInfos #[var] do
+          let newType ← convertTypeSimpleNew var type baseMap
+          withLocalDeclD (varNm.appendAfter "_extra") newType fun extraVar => do
+          let allVars := allVars.push var
+          let allNewVars := allNewVars.push var |>.push extraVar
+          let baseMap := baseMap.insert var.fvarId! extraVar
+          let proof := mkApp2 proof var extraVar
+          if nparams ≠ 0 ∨ (← isProof var) then
+            return ← go prim (i + 1) proof allVars allNewVars
+              (nparams - 1) (comps.push .always) baseMap
+          let .forallE nm t b bi := type | unreachable!
+          let lvl ← withLocalDeclD `c ctx fun var => getLevel (b.instantiate1 var)
+          let pred := if prim then ``DPrim else ``DComp
+          let dcomp := mkApp3 (.const pred [ctxLvl, lvl]) ctx (.lam nm t b bi) var
+          withLocalDeclD (varNm.appendAfter "_comp") dcomp fun hcompDummy => do
+          let newDComp ← convertTypeSimpleNew hcompDummy dcomp baseMap
+          withLocalDeclD (varNm.appendAfter "_comp_extra") newDComp fun hcomp => do
+          let allVars := allVars.push hcompDummy
+          let allNewVars := allNewVars.push hcompDummy |>.push hcomp
+          let proof := proof.app hcomp
+          let theComp := if prim then .prim else .computable
+          let baseMap := baseMap.insert hcompDummy.fvarId! hcomp
+          go prim (i + 1) proof allVars allNewVars 0 (comps.push theComp) baseMap
+        else
+          let .forallE nm t b bi := body | unreachable!
+          let lvl ← withLocalDeclD `c ctx fun var => getLevel (b.instantiate1 var)
+          let ctorApp := mkAppN (.const ctorName levels) (vars.map (·.app (.bvar 0)))
+          let ctorApp := .lam nm t ctorApp bi
+          let ctorAppType := .lam nm t b bi
+          let pred := if prim then ``DPrim else ``DComp
+          let dummyThm := if prim then ``DPrim.unsafeIntro else ``DComp.unsafeIntro
+          let proofDummy := mkApp3 (.const dummyThm [ctxLvl, lvl]) ctx ctorAppType ctorApp
+          let dummyType := mkApp3 (.const pred [ctxLvl, lvl]) ctx ctorAppType ctorApp
+          let dummyType ← mkForallFVars allVars dummyType
+          let dummyValue ← mkLambdaFVars allVars proofDummy
+          let dummyName := if prim then ctorName ++ `dprim else ctorName ++ `dcomp
+          addDecl <| .thmDecl {
+            name := dummyName
+            levelParams := ctxUniv :: ctor.levelParams
+            type := dummyType
+            value := dummyValue
+          }
+          let dummyThm := .const dummyName (ctxLvl :: levels)
+          let realType ← convertTypeSimpleNew dummyThm dummyType baseMap
+          let realValue ← mkLambdaFVars allNewVars proof
+          addDecl <| .thmDecl {
+            name := mkNewName dummyName
+            levelParams := ctxUniv :: ctor.levelParams
+            type := realType
+            value := realValue
+          }
+      termination_by vars.size - i
+      let primResult := q(@($builder).primResult $input $ctx $ctx')
+      let compResult := q(@($builder).compResult $input $ctx $ctx')
+      let baseMap : FVarIdMap Expr := .insert {} ctx.fvarId! ctx'
+      MonadCacheT.run <| go true 0 primResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
+      MonadCacheT.run <| go false 0 compResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
