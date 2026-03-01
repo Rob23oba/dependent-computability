@@ -437,8 +437,8 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
   let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f_base x.1 x.2)
     q(new% fun x : PSigma $t' => $f_base x.1 x.2)
   match prim with
-  | true => return q(DPrimrec.curry (f := new% $f_base) $proof)
-  | false => return q(DComputable.curry (f := new% $f_base) $proof)
+  | true => return q(DPrimrec.curry (f_extra := new% $f_base) $proof)
+  | false => return q(DComputable.curry (f_extra := new% $f_base) $proof)
 
 -- assumes that `f_base` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
@@ -480,9 +480,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       have letVal : Q($letTy) := .lam nm ctx_base v bi
       let newLetVal : Q(new_type% $letVal) ← convertToNew letVal
       -- add a base variable
-      return ← withLetDeclQ (nm'.appendAfter "_base") q($letVal) fun var_base _ => do
+      return ← withLetDeclQ nm' q($letVal) fun var_base _ => do
         -- add a converted variable
-        withLetDeclQ nm' (type := q($newLetTy.1 $letVal)) q($newLetVal)
+        withLetDeclQ (nm'.appendAfter "_extra") (type := q($newLetTy.1 $letVal)) q($newLetVal)
           fun (var : Q($newLetTy.1 $letVal)) _ => do
         withNewCtxVar var_base var do
           have b := mkAppN (b.instantiate1 (.app var (.bvar 0))) args
@@ -576,7 +576,7 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       return res.abstract #[var_base, var]
   for arg in args[thm.paramInfos.size...*] do
     let wrapInNewLam (e : Expr) : Expr :=
-      .lam (nm.appendAfter "_base") ctx_base (.lam nm (mkExtraApp ctx (.bvar 0)) e bi) bi
+      .lam nm ctx_base (.lam (nm.appendAfter "_extra") (mkExtraApp ctx (.bvar 0)) e bi) bi
     let .forallE nnn ttt bbb bbbiii := id type | throwError "error"
     let mkApp4 (.const ``New.Forall [t'lvl, b'lvl]) _ t' _ b' := id newType | unreachable!
     have t'lam : Q($ctx_base → Sort t'lvl) := .lam nm ctx_base ttt bi
