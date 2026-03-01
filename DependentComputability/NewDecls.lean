@@ -133,16 +133,16 @@ end New
 instance {α_base : Sort u} (α : new_type% α_base) [SubsingletonExtra α]
     {a_base : α_base} (a : α.1 a_base)
     {b_base : α_base} (b : α.1 b_base) :
-    NonemptyExtra (New.Eq α a b) where
-  nonempty := by
+    InhabitedExtra (New.Eq α a b) where
+  default := by
     rintro rfl
     cases (SubsingletonExtra.subsingleton a_base).allEq a b
     constructor
-    constructor
 
-instance : UniqueExtra New.Nat where
+instance : FullyRepresentable New.Nat where
   default _ := ()
   subsingleton _ := inferInstanceAs (Subsingleton Unit)
+  isRepresentable {x_base} _ := ⟨x_base, rfl⟩
 
 def uniqueNatVal (n : Nat) : new_type% n := ()
 
@@ -185,12 +185,12 @@ inductive New.List._induct {α_base : Type u} (α_extra : α_base → Type u) :
 inductive New.List._encoding {α_base : Type u}
     (α_extra : α_base → Type u) (α_enc : ⦃t_base : α_base⦄ → α_extra t_base → ℕ → Prop) :
     ⦃l_base : List α_base⦄ → _induct α_extra l_base → ℕ → Prop where
-  | nil : _encoding α_extra α_enc .nil .zero
+  | nil : _encoding α_extra α_enc .nil (Nat.pair 0 1)
   | cons {head_base : α_base} {head : α_extra head_base}
     {head_n : ℕ} (head_enc : α_enc head head_n)
     {tail_base : List α_base} {tail : _induct α_extra tail_base}
     {tail_n : ℕ} (tail_enc : _encoding α_extra α_enc tail tail_n) :
-    _encoding α_extra α_enc (.cons head tail) (.succ (Nat.pair head_n tail_n))
+    _encoding α_extra α_enc (.cons head tail) (Nat.pair (Nat.pair head_n tail_n) 2)
 
 def New.List : new_type% @List.{u} :=
   fun _ α => .mk (New.List._induct α.1) (New.List._encoding α.1 α.2)
@@ -240,8 +240,9 @@ instance {α_base : Type u} {α : new_type% α_base} [SubsingletonExtra α] :
       cases ih tail'
       rfl
 
-instance {α_base : Type u} {α : new_type% α_base} [UniqueExtra α] : UniqueExtra (New.List α) where
-  default t_base := t_base.rec .nil fun head _ ih => .cons (UniqueExtra.default head) ih
+instance {α_base : Type u} {α : new_type% α_base} [InhabitedExtra α] :
+    InhabitedExtra (New.List α) where
+  default t_base := t_base.rec .nil fun head _ ih => .cons (InhabitedExtra.default head) ih
 
 instance {α_base : Type u} {α : new_type% α_base} [SubsingletonExtra α] :
     SubsingletonExtra (New.Array α) where
@@ -251,93 +252,128 @@ instance {α_base : Type u} {α : new_type% α_base} [SubsingletonExtra α] :
     refine congrArg New.Array._induct.mk ?_
     apply Subsingleton.allEq (α := new_type% t_base.1)
 
-instance {α_base : Type u} {α : new_type% α_base} [UniqueExtra α] : UniqueExtra (New.Array α) where
-  default t_base := t_base.rec fun a => .mk
-    (show new_type% a from UniqueExtra.default (α := New.List α) a)
+instance {α_base : Type u} {α : new_type% α_base} [InhabitedExtra α] :
+    InhabitedExtra (New.Array α) where
+  default t_base := t_base.rec fun a => .mk (InhabitedExtra.default (α := New.List α) a)
 
-def nonemptyExtraOfDecidable {p_base : Prop} {p : new_type% p_base}
+def inhabitedExtraOfDecidable {p_base : Prop} {p : new_type% p_base}
     {h_base : Decidable p_base} (h : new_type% h_base) :
-    NonemptyExtra p where
-  nonempty t_base := by
-    cases h
-    · contradiction
-    · constructor; assumption
+    InhabitedExtra p where
+  default t_base := by cases h <;> trivial
 
 instance {n_base : ℕ} {n : new_type% n_base} {m_base : ℕ} {m : new_type% m_base} :
-    NonemptyExtra (@New.Nat.le n_base n m_base m) :=
-  nonemptyExtraOfDecidable (new% Nat.decLe n_base m_base)
+    InhabitedExtra (@New.Nat.le n_base n m_base m) :=
+  inhabitedExtraOfDecidable (new% Nat.decLe n_base m_base)
 
 instance {n_base : ℕ} {n : new_type% n_base} {m_base : ℕ} {m : new_type% m_base} :
-    NonemptyExtra (new% n_base ≤ m_base) := instNonemptyExtraLeLe
+    InhabitedExtra (new% n_base ≤ m_base) :=
+  inferInstanceAs (InhabitedExtra (new% Nat.le n_base m_base))
 
 instance {n_base : ℕ} {n : new_type% n_base} {m_base : ℕ} {m : new_type% m_base} :
-    NonemptyExtra (new% n_base < m_base) := instNonemptyExtraLeLe
+    InhabitedExtra (new% n_base < m_base) :=
+  inferInstanceAs (InhabitedExtra (new% Nat.le n_base.succ m_base))
 
-instance {n_base : ℕ} {n : new_type% n_base} : UniqueExtra (@New.Fin n_base n) where
+instance {n_base : ℕ} {n : new_type% n_base} : InhabitedExtra (@New.Fin n_base n) where
+  default t_base :=
+    .mk _ _ () (InhabitedExtra.default (α := @New.Nat.le t_base.succ () n_base ()) t_base.2)
+
+instance {n_base : ℕ} {n : new_type% n_base} : SubsingletonExtra (@New.Fin n_base n) where
   subsingleton t_base := by
     constructor
     rintro ⟨⟩ ⟨⟩; rfl
-  default t_base :=
-    .mk _ _ () (NonemptyExtra.transfer (@New.Nat.le t_base.succ () n_base ()) t_base.2)
 
-instance {n_base : ℕ} {n : new_type% n_base} : UniqueExtra (@New.BitVec n_base n) where
+instance {n_base : ℕ} {n : new_type% n_base} : InhabitedExtra (@New.BitVec n_base n) where
+  default t_base := .ofFin _ _ (InhabitedExtra.default (α := new% Fin (Nat.pow 2 n_base)) t_base.1)
+
+instance {n_base : ℕ} {n : new_type% n_base} : SubsingletonExtra (@New.BitVec n_base n) where
   subsingleton t_base := by
     constructor
     rintro ⟨⟨⟩⟩ ⟨⟨⟩⟩; rfl
-  default t_base := .ofFin _ _ (UniqueExtra.default (α := new% Fin (Nat.pow 2 n_base)) t_base.1)
 
-instance : UniqueExtra New.UInt8 where
+instance : InhabitedExtra New.UInt8 where
+  default t_base := .ofBitVec _ (InhabitedExtra.default (α := new% BitVec 8) t_base.1)
+
+instance : SubsingletonExtra New.UInt8 where
   subsingleton t_base := by
     constructor
     rintro ⟨⟨⟨⟩⟩⟩ ⟨⟨⟨⟩⟩⟩; rfl
-  default t_base := .ofBitVec _ (UniqueExtra.default (α := new% BitVec 8) t_base.1)
 
-instance : UniqueExtra New.UInt32 where
+instance : InhabitedExtra New.UInt32 where
+  default t_base := .ofBitVec _ (InhabitedExtra.default (α := new% BitVec 32) t_base.1)
+
+instance : SubsingletonExtra New.UInt32 where
   subsingleton t_base := by
     constructor
     rintro ⟨⟨⟨⟩⟩⟩ ⟨⟨⟨⟩⟩⟩; rfl
-  default t_base := .ofBitVec _ (UniqueExtra.default (α := new% BitVec 32) t_base.1)
 
 convert_to_new inferInstance instDecidableOr instDecidableAnd
 
 instance {n_base : UInt32} (n : new_type% n_base) :
-    NonemptyExtra (New.UInt32.isValidChar n) :=
-  nonemptyExtraOfDecidable (new% (inferInstance : Decidable (UInt32.isValidChar n_base)))
+    InhabitedExtra (New.UInt32.isValidChar n) :=
+  inhabitedExtraOfDecidable (new% (inferInstance : Decidable (UInt32.isValidChar n_base)))
 
-instance : UniqueExtra New.Char where
+instance : InhabitedExtra New.Char where
+  default t_base := .mk _ (InhabitedExtra.default (α := New.UInt32) t_base.1)
+    (InhabitedExtra.default (α := @New.UInt32.isValidChar t_base.1 _) _)
+
+instance : SubsingletonExtra New.Char where
   subsingleton t_base := by
     constructor
     rintro ⟨⟨⟨⟨⟩⟩⟩⟩ ⟨⟨⟨⟩⟩⟩; rfl
-  default t_base := .mk _ (UniqueExtra.default (α := New.UInt32) t_base.1)
-    (NonemptyExtra.transfer (@New.UInt32.isValidChar t_base.1 _) _)
 
-instance : UniqueExtra New.ByteArray where
+instance : SubsingletonExtra New.ByteArray where
   subsingleton t_base := by
     constructor
     rintro ⟨a⟩ ⟨b⟩
     cases Subsingleton.allEq a b; rfl
+
+instance : InhabitedExtra New.ByteArray where
   default t_base := t_base.rec fun a => .mk _
-    (show new_type% a from UniqueExtra.default (α := New.Array New.UInt8) a)
+    (show new_type% a from InhabitedExtra.default (α := New.Array New.UInt8) a)
 
 instance {b_base : ByteArray} (b : new_type% b_base) :
-    NonemptyExtra (New.ByteArray.IsValidUTF8 b) where
-  nonempty t_base := by
+    InhabitedExtra (New.ByteArray.IsValidUTF8 b) where
+  default t_base := by
     rcases t_base with ⟨l, hl⟩
-    constructor
     refine @New.ByteArray.IsValidUTF8._induct.intro _ _ l ?_ hl ?_
-    · with_reducible exact UniqueExtra.default _
-    · with_reducible exact NonemptyExtra.transfer _ _
+    · with_reducible exact InhabitedExtra.default _
+    · with_reducible exact InhabitedExtra.default _
 
-instance : UniqueExtra New.String where
+instance : SubsingletonExtra New.String where
   subsingleton t_base := by
     constructor
     rintro ⟨a⟩ ⟨b⟩
     cases Subsingleton.allEq a b; rfl
-  default t_base := .ofByteArray _ (UniqueExtra.default (α := New.ByteArray) _)
-    (NonemptyExtra.transfer (@New.ByteArray.IsValidUTF8 t_base.1 _) _)
+
+instance : InhabitedExtra New.String where
+  default t_base := .ofByteArray _ (InhabitedExtra.default (α := New.ByteArray) _)
+    (InhabitedExtra.default (α := @New.ByteArray.IsValidUTF8 t_base.1 _) _)
 
 noncomputable def uniqueStrVal (s : String) : new_type% s :=
-  UniqueExtra.default (α := new% String) s
+  InhabitedExtra.default (α := new% String) s
+
+instance {p_base : Prop} {p : new_type% p_base} {q_base : Prop} {q : new_type% q_base}
+    [InhabitedExtra p] [InhabitedExtra q] : InhabitedExtra (New.Iff p q) where
+  default h := by
+    constructor
+    · intro hp hp'
+      exact InhabitedExtra.default (h.mp hp)
+    · intro hq hq'
+      exact InhabitedExtra.default (h.mpr hq)
+
+instance {p_base : Prop} {p : new_type% p_base} {q_base : Prop} {q : new_type% q_base}
+    [InhabitedExtra p] [InhabitedExtra q] : InhabitedExtra (New.And p q) where
+  default h := by
+    constructor
+    · exact InhabitedExtra.default h.1
+    · exact InhabitedExtra.default h.2
+
+instance {p_base : Prop} {p : new_type% p_base} {q_base : Prop} {q : new_type% q_base}
+    [InhabitedExtra p] [InhabitedExtra q] : InhabitedExtra (New.Or p q) where
+  default h := by
+    rcases h with h | h
+    · left; exact InhabitedExtra.default h
+    · right; exact InhabitedExtra.default h
 
 convert_to_new Lean.SourceInfo Lean.SyntaxNodeKind Lean.Syntax.Preresolved
 
@@ -360,7 +396,7 @@ inductive _root_.New.Lean.Syntax._induct : Lean.Syntax → Type where
 
 inductive _root_.New.Lean.Syntax._encoding :
     ⦃t_base : Lean.Syntax⦄ → New.Lean.Syntax._induct t_base → ℕ → Prop where
-  | missing : _encoding .missing 0
+  | missing : _encoding .missing 1
   | node
     {info_base : Lean.SourceInfo} {info : new_type% info_base}
     {info_n : ℕ} (info_enc : New.Lean.SourceInfo.2 info info_n)
@@ -369,12 +405,12 @@ inductive _root_.New.Lean.Syntax._encoding :
     {args_base : Array Lean.Syntax}
     {args : @New.List._induct Lean.Syntax New.Lean.Syntax._induct args_base.1}
     {args_n : ℕ} (args_enc : New.List._encoding New.Lean.Syntax._induct _encoding args args_n) :
-    _encoding (.node info kind args) (Nat.pair info_n (Nat.pair kind_n args_n) * 3 + 1)
+    _encoding (.node info kind args) (Nat.pair (Nat.pair info_n kind_n) args_n * 4 + 2)
   | atom {info_base : Lean.SourceInfo} {info : new_type% info_base}
     {info_n : ℕ} (info_enc : New.Lean.SourceInfo.2 info info_n)
     {val_base : String} {val : new_type% val_base}
     {val_n : ℕ} (val_enc : New.String.2 val val_n) :
-    _encoding (.atom info val) (Nat.pair info_n val_n * 3 + 2)
+    _encoding (.atom info val) (Nat.pair info_n val_n * 4 + 3)
   | ident  {info_base : Lean.SourceInfo} {info : new_type% info_base}
     {info_n : ℕ} (info_enc : New.Lean.SourceInfo.2 info info_n)
     {rawVal_base : Substring.Raw} {rawVal : new_type% rawVal_base}
@@ -386,7 +422,7 @@ inductive _root_.New.Lean.Syntax._encoding :
     {preresolved_n : ℕ}
     (preresolved_enc : (New.List New.Lean.Syntax.Preresolved).2 preresolved preresolved_n) :
     _encoding (.ident info rawVal val preresolved)
-      (Nat.pair info_n (Nat.pair rawVal_n (Nat.pair val_n preresolved_n)) * 3 + 3)
+      (Nat.pair (Nat.pair (Nat.pair info_n rawVal_n) val_n) preresolved_n * 4 + 4)
 
 def New.Lean.Syntax : new_type% Lean.Syntax :=
   .mk Syntax._induct Syntax._encoding (IsPropEncodingTrivial.univElim.{1} _)
@@ -481,22 +517,6 @@ theorem not_em' : ¬ ∃ h : type_of% Classical.em, new_type% h := by
 theorem not_not_em' : ¬ ∃ h : ¬(type_of% Classical.em), new_type% h := by
   intro ⟨h, _⟩
   simp at h
-
-def splitLeft (p : ℕ → Prop) : ℕ → Prop :=
-  fun n => ∃ k, n = k * 2 ∧ p k
-
-def splitRight (p : ℕ → Prop) : ℕ → Prop :=
-  fun n => ∃ k, n = k * 2 + 1 ∧ p k
-
-def split (p : ℕ → ℕ → Prop) : ℕ → Prop :=
-  Nat.unpaired p
-
-inductive New.Prod._encodes {α_base : Type u} {α : new_type% α_base}
-    {β_base : Type v} {β : new_type% β_base} :
-    {x_base : α_base × β_base} → (x : New.Prod._induct α β x_base) → Nat → Prop where
-  | mk {fst_base : α_base} {fst : α.1 fst_base} {fst_num : ℕ} (fst_encodes : α.2 fst fst_num)
-       {snd_base : β_base} {snd : β.1 snd_base} {snd_num : ℕ} (snd_encodes : β.2 snd snd_num) :
-       _encodes (New.Prod.mk α β fst snd) (Nat.pair fst_num snd_num)
 
 lemma Nat.rfindX._proof_1_alt : type_of% @Nat.rfindX._proof_1 := by
   intro p H m al

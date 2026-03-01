@@ -487,8 +487,7 @@ def TheoremBuilder.baseTransformed.{c} {prectx_base : Sort u} {prectx : new_type
   in_implies_outPrim _ _ _ _ pre_n prim hin := ⟨_, hg.comp prim, hin⟩
   in_implies_outComp _ _ _ _ pre_n comp hin := ⟨_, .comp (.of_primrec hg) comp, by simpa using hin⟩
 
-theorem primrec_mul_add (a b : ℕ) : Nat.Primrec (fun n => Nat.add (Nat.mul n a) b) := by
-  simpa using Nat.Primrec.comp .add (.pair (.comp .mul (.pair .id (.const a))) (.const b))
+theorem primrec_pair_right (c : ℕ) : Nat.Primrec (fun n => Nat.pair n c) := .pair .id (.const c)
 
 def TheoremBuilder.prepend.{c} {prectx_base : Sort u} {prectx : new_type% prectx_base}
     {α_base : prectx_base → Sort v} {α : new_type% α_base}
@@ -655,10 +654,9 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
   have levels := ctor.levelParams.map Level.param
   have val : Q($ctorType) := .const ctor.name levels
   have _valNew : Q(new_type% $val) := .const (mkNewName ctor.name) levels
-  have factor : Q(ℕ) := mkRawNatLit ind.numCtors
   have off : Q(ℕ) := mkRawNatLit (ctor.cidx + 1)
   have ⟨f, hf⟩ : (f : Q(ℕ → ℕ)) × Q(Nat.Primrec $f) :=
-    if isStruct then ⟨q(id), q(.id)⟩ else ⟨_, q(primrec_mul_add $factor $off)⟩
+    if isStruct then ⟨q(id), q(.id)⟩ else ⟨_, q(primrec_pair_right $off)⟩
   -- Build the theorem builder
   let builder ← makeTheoremBuilder q(new% fun _ : Unit => $val) q($f) q($hf)
     (hadRelevant := false) ctor.numParams ctxLvl
@@ -722,6 +720,7 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
           let dummyThm := .const dummyName (ctxLvl :: levels)
           let realType ← convertTypeSimpleNew dummyThm dummyType baseMap
           let realValue ← mkLambdaFVars allNewVars proof
+          check realValue
           addDecl <| .thmDecl {
             name := mkNewName dummyName
             levelParams := ctxUniv :: ctor.levelParams
@@ -734,3 +733,13 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
       let baseMap : FVarIdMap Expr := .insert {} ctx.fvarId! ctx'
       MonadCacheT.run <| go true 0 primResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
       MonadCacheT.run <| go false 0 compResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
+
+#print New.Nat.Partrec.Code._encoding
+#eval! proveConstructorComputable ``Nat.Partrec.Code.zero
+#eval! proveConstructorComputable ``Nat.Partrec.Code.succ
+#eval! proveConstructorComputable ``Nat.Partrec.Code.left
+#eval! proveConstructorComputable ``Nat.Partrec.Code.right
+#eval! proveConstructorComputable ``Nat.Partrec.Code.prec
+#eval! proveConstructorComputable ``Nat.Partrec.Code.pair
+#eval! proveConstructorComputable ``Nat.Partrec.Code.comp
+#eval! proveConstructorComputable ``Nat.Partrec.Code.rfind'

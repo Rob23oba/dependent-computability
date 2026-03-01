@@ -287,37 +287,25 @@ elab tk:"new_type% " t:term : term => do
   let newExpr ← (conversionStepNew.visit type baseMap).run
   return mkExtraApp newExpr expr
 
-class NonemptyExtra {α_base : Sort u} (α : new_type% α_base) where
-  nonempty : ∀ a, Nonempty (α.1 a)
+class InhabitedExtra {α_base : Sort u} (α : new_type% α_base) where
+  default : ∀ a, α.1 a
 
 class SubsingletonExtra {α_base : Sort u} (α : new_type% α_base) where
   subsingleton : ∀ a, Subsingleton (α.1 a)
 
-class UniqueExtra {α_base : Sort u} (α : new_type% α_base)
-    extends SubsingletonExtra α where
-  default : ∀ a, α.1 a
+instance {α_base α} [@InhabitedExtra α_base α] (a : α_base) : Nonempty (new_type% a) :=
+  ⟨InhabitedExtra.default a⟩
 
-attribute [instance] NonemptyExtra.nonempty SubsingletonExtra.subsingleton
+attribute [instance] SubsingletonExtra.subsingleton
 
-instance [UniqueExtra α] : NonemptyExtra α where
-  nonempty x := ⟨UniqueExtra.default x⟩
-
-theorem NonemptyExtra.transfer {p_base : Prop} (p : new_type% p_base)
-    [NonemptyExtra p] (h : p_base) : p.1 h := by
-  obtain ⟨h'⟩ := NonemptyExtra.nonempty (α := p) h
-  exact h'
-
-instance : NonemptyExtra New.Sort.{u} where
-  nonempty _ := ⟨fun _ => PUnit.{u}, TrivialEncoding _, .trivialEncoding _⟩
+instance : InhabitedExtra New.Sort.{u} where
+  default _ := ⟨fun _ => PUnit.{u}, TrivialEncoding _, .trivialEncoding _⟩
 
 instance {α_base : Sort u} (α : New.Sort.1 α_base) {β_base : α_base → Sort v}
     (β : ⦃a_base : α_base⦄ → α.1 a_base → New.Sort.1 (β_base a_base))
-    [∀ a_base a, NonemptyExtra (@β a_base a)] :
-    NonemptyExtra (New.Forall α β) where
-  nonempty f := by
-    constructor
-    intro a_base a
-    exact Classical.choice (NonemptyExtra.nonempty (f a_base))
+    [∀ a_base a, InhabitedExtra (@β a_base a)] :
+    InhabitedExtra (New.Forall α β) where
+  default f a_base _ := InhabitedExtra.default (f a_base)
 
 instance {α_base : Sort u} (α : New.Sort.1 α_base) {β_base : α_base → Sort v}
     (β : ⦃a_base : α_base⦄ → α.1 a_base → New.Sort.1 (β_base a_base))
@@ -329,11 +317,8 @@ instance {α_base : Sort u} (α : New.Sort.1 α_base) {β_base : α_base → Sor
     funext x_base x
     apply Subsingleton.allEq
 
-instance {α_base : Type u} (α : New.Sort.1 α_base) {β_base : α_base → Type v}
-    (β : ⦃a_base : α_base⦄ → α.1 a_base → New.Sort.1 (β_base a_base))
-    [∀ a_base a, UniqueExtra (@β a_base a)] :
-    UniqueExtra (New.Forall α β) where
-  default f_base := fun {a_base} _ => UniqueExtra.default (f_base a_base)
+instance (priority := low) {p_base : Prop} {p : new_type% p_base} : SubsingletonExtra p where
+  subsingleton := inferInstance
 
 def IsRepresentable {α_base : Sort u} {α : new_type% α_base}
     {x_base : α_base} (x : new_type% x_base) : Prop :=
@@ -352,7 +337,7 @@ inductive DPrimrec {α_base : Sort u} {α : new_type% α_base}
     (hg' : ∀ ⦃a_base a n⦄, @α.2 a_base a n → (β a).2 (f a) (g n))
 
 class FullyRepresentable {α_base : Sort u} (α : new_type% α_base)
-    extends UniqueExtra α where
+    extends InhabitedExtra α, SubsingletonExtra α where
   isRepresentable : ∀ {x_base : α_base} (x : α.1 x_base), IsRepresentable x
 
 class CompatibleEncodingRelation {α_base : Type u} (α : new_type% α_base)
@@ -468,7 +453,7 @@ def Encoding.of {α_base : Type u} {α : new_type% α_base}
 theorem Encoding.encode_of {α_base : Type u} {α : new_type% α_base}
     [Encodable α_base] [CompatibleEncodingRelation α]
     (x : α_base) : Encodable.encode (Encoding.of (α := α) x) = Encodable.encode x := by
-  obtain ⟨n, hn⟩ := FullyRepresentable.isRepresentable (UniqueExtra.default x : α.1 x)
+  obtain ⟨n, hn⟩ := FullyRepresentable.isRepresentable (InhabitedExtra.default x : α.1 x)
   simp [of, ← Encoding.encode_eq hn, Encodable.encode]
 
 theorem Encoding.encoding_of {α_base : Type u} {α : new_type% α_base}
@@ -496,7 +481,7 @@ theorem dprimrec_iff_primrec {α_base : Type u} {α : new_type% α_base}
     rw [← Primrec.nat_iff] at hgprim ⊢
     let g' (a : Encoding α) : Encoding β := ⟨g a.repr⟩
     have commute (a : α_base) : g' (Encoding.of a) = Encoding.of (f_base a) := by
-      have := hg' (Encoding.encoding_of (UniqueExtra.default a : α.1 a))
+      have := hg' (Encoding.encoding_of (InhabitedExtra.default a : α.1 a))
       simp [Encoding.of, g', ← Encoding.encode_eq this, Encodable.encode]
     have hg'prim : Primrec g' := .comp Encoding.primrec_mk (.comp hgprim Encoding.primrec_repr)
     let fn (n : ℕ) : ℕ :=
@@ -534,7 +519,7 @@ theorem dcomputable_iff_computable {α_base : Type u} {α : new_type% α_base}
     rw [← Partrec.nat_iff] at hgprim ⊢
     let g' (a : Encoding α) : Part (Encoding β) := (g a.repr).map Encoding.mk
     have commute (a : α_base) : g' (Encoding.of a) = Part.some (Encoding.of (f_base a)) := by
-      obtain ⟨y, hy, this⟩ := hg' (Encoding.encoding_of (UniqueExtra.default a : α.1 a))
+      obtain ⟨y, hy, this⟩ := hg' (Encoding.encoding_of (InhabitedExtra.default a : α.1 a))
       simp only [Encoding.of] at hy
       simp [Encoding.of, g', ← Encoding.encode_eq this, Part.eq_some_iff.mpr hy, Encodable.encode]
     have hg'part : Partrec g' :=
@@ -715,9 +700,10 @@ inductive New.PSigma._induct {α_base : Sort u} {α : new_type% α_base}
 
 inductive New.PSigma._encoding {α_base : Sort u} {α : new_type% α_base}
     {β_base : α_base → Sort v} (β : new_type% β_base)
-    ⦃p_base : PSigma β_base⦄ (p : New.PSigma._induct β p_base) (n : ℕ) :
-    Prop where
-  | mk (fst : α.2 p.1 n.unpair.1) (snd : (β _).2 p.2 n.unpair.2)
+    ⦃p_base : PSigma β_base⦄ (p : New.PSigma._induct β p_base) :
+    (n : ℕ) → Prop where
+  | mk {fst_n : ℕ} (fst : α.2 p.1 fst_n) {snd_n : ℕ} (snd : (β _).2 p.2 snd_n) :
+    _encoding β p (Nat.pair fst_n snd_n)
 
 def New.PSigma.{u, v} : new_type% @PSigma.{u, v} := fun _ _ _ β =>
   .mk (New.PSigma._induct β) (New.PSigma._encoding β) not_isProp.{max u v}.elim
@@ -749,11 +735,9 @@ theorem New.PSigma.mk.primrec.{c, u, v}
   refine ⟨_, .pair hf hg, ?_⟩
   intros
   constructor
-  · simp only [Nat.unpair_pair]
-    apply hf'
+  · apply hf'
     assumption
-  · simp only [Nat.unpair_pair]
-    apply hg'
+  · apply hg'
     assumption
 
 theorem New.PSigma.fst.primrec.{c, u, v}
@@ -768,7 +752,9 @@ theorem New.PSigma.fst.primrec.{c, u, v}
   obtain ⟨f, hf, hf'⟩ := self_prim
   refine ⟨_, .comp .left hf, ?_⟩
   intro a_base a n han
-  exact (hf' han).1
+  refine (hf' han).casesOn ?_
+  intros
+  simpa
 
 theorem New.PSigma.snd.primrec.{c, u, v}
     {ctx_base : Sort c} {ctx : new_type% ctx_base}
@@ -782,7 +768,9 @@ theorem New.PSigma.snd.primrec.{c, u, v}
   obtain ⟨f, hf, hf'⟩ := self_prim
   refine ⟨_, .comp .right hf, ?_⟩
   intro a_base a n han
-  exact (hf' han).2
+  refine (hf' han).casesOn ?_
+  intros
+  simpa
 
 theorem New.PSigma.mk.computable.{c, u, v}
     {ctx_base : Sort c} {ctx : new_type% ctx_base}
@@ -819,8 +807,8 @@ theorem New.PSigma.fst.computable.{c, u, v}
   intro a_base a n han
   simp only [Part.bind_eq_bind, Part.mem_bind_iff, PFun.coe_val, Part.mem_some_iff, ↓existsAndEq,
     and_true]
-  obtain ⟨y, hy, hy'⟩ := hf' han
-  exact ⟨y, hy, hy'.1⟩
+  obtain @⟨_, hy, x, hy₁, x', hy₂⟩ := hf' han
+  exact ⟨_, hy, by simpa using hy₁⟩
 
 theorem New.PSigma.snd.computable.{c, u, v}
     {ctx_base : Sort c} {ctx : new_type% ctx_base}
@@ -836,8 +824,8 @@ theorem New.PSigma.snd.computable.{c, u, v}
   intro a_base a n han
   simp only [Part.bind_eq_bind, Part.mem_bind_iff, PFun.coe_val, Part.mem_some_iff, ↓existsAndEq,
     and_true]
-  obtain ⟨y, hy, hy'⟩ := hf' han
-  exact ⟨y, hy, hy'.2⟩
+  obtain @⟨_, hy, x, hy₁, x', hy₂⟩ := hf' han
+  exact ⟨_, hy, by simpa using hy₂⟩
 
 open Nat.Partrec (Code) in
 theorem DPrimrec.curry

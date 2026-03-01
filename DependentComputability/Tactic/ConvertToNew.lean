@@ -123,16 +123,12 @@ def toNewEncodingInductiveType (info : InductiveVal) : MetaM InductiveType := do
           body.withApp fun fn args => do
           assert! fn.isConst
           let newCtorApp := mkAppN (.const newCtorName levels) vars
-          let encoding ← if nats.isEmpty then
-              pure (mkRawNatLit (ctorIdx + 1))
+          let encoding := if nats.isEmpty then
+              mkApp2 (mkConst ``Nat.pair) (mkRawNatLit 0) (mkRawNatLit (ctorIdx + 1))
             else
+              let nats := nats.push (mkRawNatLit (ctorIdx + 1))
               let first := nats[0]!
-              let enc := nats.foldl (mkApp2 (mkConst ``Nat.pair)) first (start := 1)
-              let enc := if ctorCount > 1 then
-                  mkApp2 (mkConst ``Nat.mul) enc (mkRawNatLit ctorCount)
-                else enc
-              let enc := mkApp2 (mkConst ``Nat.add) enc (mkRawNatLit (ctorIdx + 1))
-              pure enc
+              nats.foldl (mkApp2 (mkConst ``Nat.pair)) first (start := 1)
           let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) newCtorApp encoding
           let ctorType ← mkForallFVars allVars ctorType
           return {
@@ -560,10 +556,10 @@ partial def recConvertToNew (nm : Name) : CoreM Unit := do
         let const := .const val.name (val.levelParams.map Level.param)
         let newType' : Expr := .app (.proj ``SortExtra 0 newType) const
         -- attempt transfer
-        let instType := mkApp2 (.const ``NonemptyExtra [levelZero]) type newType
+        let instType := mkApp2 (.const ``InhabitedExtra [.zero]) type newType
         let mut newValue := default
         if let some inst ← synthInstance? instType then
-          newValue := mkApp4 (.const ``NonemptyExtra.transfer []) type newType inst const
+          newValue := mkApp4 (.const ``InhabitedExtra.default [.zero]) type newType inst const
         else
           let value := val.value
           let consts := value.getUsedConstantsAsSet
@@ -576,6 +572,29 @@ partial def recConvertToNew (nm : Name) : CoreM Unit := do
           type := newType'
           value := newValue
         }
+    | .opaqueInfo val =>
+      let type := val.type
+      for c in type.getUsedConstantsAsSet do
+        recConvertToNew c
+      Meta.MetaM.run' do
+        let newType ← conversionStepNew type
+        let lvl ← getLevel type
+        let const := .const val.name (val.levelParams.map Level.param)
+        let newType' : Expr := .app (.proj ``SortExtra 0 newType) const
+        -- attempt transfer
+        let instType := mkApp2 (.const ``InhabitedExtra [lvl]) type newType
+        try
+          let inst ← synthInstance instType
+          let newValue := mkApp4 (.const ``InhabitedExtra.default [lvl]) type newType inst const
+          Lean.addDecl <| .opaqueDecl {
+            name := mkNewName nm
+            levelParams := val.levelParams
+            type := newType'
+            value := newValue
+            isUnsafe := val.isUnsafe
+          }
+        catch ex =>
+          throwError "Failed to translate opaque {.ofConstName nm}\n{ex.toMessageData}"
     | .inductInfo val => (convertInductToNew val).run'
     | .ctorInfo val => recConvertToNew val.induct
     | _ => throwError "unhandled const info {.ofConstName nm}"
