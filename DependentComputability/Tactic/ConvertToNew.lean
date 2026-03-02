@@ -543,6 +543,7 @@ partial def convertInductToNew (val : InductiveVal) : MetaM Unit := do
   for ind in all do
     let info ← getConstInfoInduct ind
     addNewCtorDecls info
+  for ind in all do
     let info ← getConstInfoRec (mkRecName ind)
     addNewRecursor ind info recNames
 

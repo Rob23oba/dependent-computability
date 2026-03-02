@@ -568,6 +568,93 @@ def mkRecursorModelDescrInfo (motives minors : Array Expr) :
     byMotive := byMotive.push minorsForMotive
   return byMotive
 
+def _root_.Lean.RecursorVal.largeElim (val : RecursorVal) : Bool :=
+  go val.numParams val.type
+where
+  go : ℕ → Expr → Bool
+    | 0, .forallE _ t _ _ => (t.getForallBody matches .sort (.param _))
+    | k + 1, .forallE _ _ b _ => go k b
+    | _, _ => false
+
+def proveEncodingByInduction (info : RecursorVal)
+    (descrInfo : Array (Array (ℕ × List FieldInfo))) (descr : Q(MutualInductDescr))
+    (ctxLvl elimLvl : Level) (ctx : Q(Sort ctxLvl)) (newCtx : Q(new_type% $ctx))
+    (vars newVars : Array Expr)
+    (minorsPrimData : Array ((f : Q(ℕ → ℕ)) × Q(Nat.Primrec «$f») × Expr))
+    (majorFn majorenc : Expr)
+    (c : Q($ctx)) (c' : Q(new_type% $c)) (cn : Q(ℕ)) (cenc : Q($newCtx.2 $c' $cn))
+    (extraMap : FVarIdMap Expr) :
+    M Expr := do
+  let .str inductName recSuffix := info.name | panic! "invalid recursor name"
+  let encodingRecName := .str (mkNewInductEncodingName inductName) recSuffix
+  let encodingRecursor ← getConstInfoRec encodingRecName
+  let type := encodingRecursor.type
+  assert! encodingRecursor.numMotives == info.numMotives &&
+    encodingRecursor.numMinors == info.numMinors &&
+    encodingRecursor.numParams == info.numParams * 2 &&
+    encodingRecursor.numIndices == info.numIndices * 2 + 3
+  let levels := info.levelParams.map Level.param
+  let encRecLevels := if encodingRecursor.largeElim then .zero :: levels.tail else levels.tail
+  let params := (vars.take info.numParams).map (·.app c)
+  let newParams := (newVars.take info.numParams).map (mkApp2 · c c')
+  let allParams := params.interleave newParams
+  let mut type := type.getForallBodyMaxDepth (info.numParams * 2) |>.instantiateRev allParams
+  let mut proof := mkAppN (.const encodingRecName encRecLevels) allParams
+  let mut motives : Array Expr := #[]
+  let nonMajorVars := (vars.take info.getFirstIndexIdx).map (·.app c)
+  let newNonMajorVars := (newVars.take info.getFirstIndexIdx).map (mkApp2 · c c')
+  let allNonMajorVars := nonMajorVars.interleave newNonMajorVars
+  let allRecNames := info.all.map mkRecName
+  for motiveIdx in *...info.numMotives do
+    let .forallE _ motiveType moreType _ := type | unreachable!
+    let motive ← forallTelescope motiveType fun motiveVars _ => do
+      let numVar : Q(ℕ) := motiveVars[motiveVars.size - 2]! -- encoding number
+      let allMajors := motiveVars.pop.pop -- indices and major
+      let regularMajors := allMajors.steps 0 2
+      let recName := allRecNames[motiveIdx]!
+      let newType := mkAppN (mkApp2 newVars[info.numParams + motiveIdx]! c c') allMajors
+      let recApp := mkAppN (mkAppN (.const recName levels) nonMajorVars) regularMajors
+      let newRecApp := mkAppN (mkAppN (.const (mkNewName recName) levels) allNonMajorVars) allMajors
+      have motiveIdxLit : Q(ℕ) := mkRawNatLit motiveIdx
+      let model := q(recursorModel $descr $cn $motiveIdxLit $numVar)
+      let motive := mkApp3 (.proj ``SortExtra 1 newType) recApp newRecApp model
+      mkLambdaFVars motiveVars motive
+    type := moreType
+    proof := proof.app motive
+    motives := motives.push motive
+  type := type.instantiateRev motives
+  for _minorIdx in *...info.numMinors do
+    let .forallE _ motiveType moreType _ := type | unreachable!
+    type := moreType
+    proof := proof.app (← mkSorry motiveType true)
+  let majorVars := (vars.drop info.getFirstIndexIdx).map (·.app c)
+  let newMajorVars := (newVars.drop info.getFirstIndexIdx).map (mkApp2 · c c')
+  proof := mkAppN proof (majorVars.interleave newMajorVars)
+  proof := proof.app (majorFn.app cn)
+  proof := proof.app (mkApp4 majorenc c c' cn cenc)
+  return proof
+
+partial def findBadFVar (e : Expr) : MetaM Bool := do
+  match e with
+  | .fvar f =>
+    if (← f.findDecl?).isNone then
+      return true
+    return false
+  | .mdata _ e' => findBadFVar e'
+  | .proj _ _ e' => findBadFVar e'
+  | .app f a =>
+    if ← findBadFVar f <||> findBadFVar a then
+      Lean.logInfo e
+      return true
+    return false
+  | .lam nm t b bi | .forallE nm t b bi =>
+    withLocalDecl nm bi t fun var =>
+      findBadFVar (b.instantiate1 var)
+  | .letE nm t v b nd =>
+    withLetDecl nm t v (nondep := nd) fun var =>
+      findBadFVar (b.instantiate1 var)
+  | .bvar _ | .mvar _ | .lit _ | .const .. | .sort _ => return false
+
 def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
     (ctx : Q(Sort ctxLvl)) (newCtx : Q(new_type% $ctx))
     (vars newVars : Array Expr)
@@ -577,7 +664,7 @@ def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
   let levels := info.levelParams.map Level.param
   let recApp := mkAppN (.const info.name levels) (vars.map (.app · (.bvar 0)))
   have recApp : Q((c : $ctx) → $resultType c) := .lam `c ctx recApp .default
-  let newResultType : Q(new_type% $resultType) ← conversionStepNew.visit resultType extraMap
+  let _newResultType : Q(new_type% $resultType) ← conversionStepNew.visit resultType extraMap
   let newRecApp : Q(new_type% $recApp) ← conversionStepNew.visit recApp extraMap
   let goalType : Q(Prop) := q(DPrimrec $newRecApp)
   withDestructPrimrec goalType (minorsPrim.push majorPrim) fun primData => do
@@ -587,11 +674,24 @@ def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
   let minors := vars.extract info.getFirstMinorIdx info.getFirstIndexIdx
   let descrInfo ← mkRecursorModelDescrInfo motives minors
   let descr := infoToModelDescr descrInfo minorsPrimData
-  mapLetDecl `descr q(MutualInductDescr) descr fun descrVar => show M Q($goalType) from do
-  have descrVar : Q(MutualInductDescr) := descrVar
+  mapLetDecl `descr q(MutualInductDescr) descr fun descr => show M Q($goalType) from do
+  have descr : Q(MutualInductDescr) := descr
   let ind := motives.idxOf resultType.bindingBody!.getAppFn
   have indLit : Q(ℕ) := mkRawNatLit ind
-  return q(DPrimrec.intro _ (primrec_recursorModel $descrVar $indLit $tfn $tprim) sorry)
+  withLocalDeclDQ `c q($ctx) fun (c : Q($ctx)) => do
+  withLocalDeclDQ `c_extra q($newCtx.1 $c) fun (c' : Q(new_type% $c)) => do
+  withLocalDeclDQ `c_n q(ℕ) fun (cn : Q(ℕ)) => do
+  withLocalDeclDQ `c_enc q($newCtx.2 $c' $cn) fun (cenc : Q($newCtx.2 $c' $cn)) => do
+  let extraMap := extraMap.insert c.fvarId! c'
+  let goalType : Q(Prop) := q((new% $resultType $c).2 (new% $recApp $c)
+    (recursorModel $descr $cn $indLit ($tfn $cn)))
+  let res : Q($goalType) ← proveEncodingByInduction info descrInfo descr ctxLvl elimLvl
+    ctx newCtx vars newVars minorsPrimData tfn tenc c c' cn cenc extraMap
+  let res : Q(∀ ⦃a : «$ctx»⦄ ⦃a_extra : new_type% a⦄ ⦃n : ℕ⦄, «$newCtx».2 a_extra n →
+    (new% «$resultType» a).2 (new% «$recApp» a)
+      (recursorModel «$descr» n «$indLit» («$tfn» n))) ←
+    mkLambdaFVars #[c, c', cn, cenc] res
+  return q(DPrimrec.intro _ (primrec_recursorModel $descr $indLit $tfn $tprim) $res)
 
 open DPrimrec.Tactic.Other
 def proveNewRecursorPrim (info : RecursorVal) : MetaM Unit := do
@@ -673,3 +773,35 @@ def proveNewRecursorPrim (info : RecursorVal) : MetaM Unit := do
     type := realType
     value := realValue
   }
+
+#eval! do proveNewRecursorPrim (← getConstInfoRec ``Bool.rec)
+
+#print New.Bool.rec.dprim
+
+mutual
+
+inductive TestInduct1 (a : Bool) : Nat → Type where
+  | hiThere : TestInduct1 a 34
+  | what (x : TestInduct2 a false) : TestInduct1 a 23
+  | oh (x : TestInduct1 a (n + 2)) : TestInduct1 a n
+
+inductive TestInduct2 (a : Bool) : Bool → Type where
+  | abc (x : TestInduct1 a 11) : TestInduct2 a false
+  | xyz (x y z : TestInduct1 a 0) : TestInduct2 a true
+  | combine (x : TestInduct1 a n) (y : TestInduct2 a b) : TestInduct2 a (n == 0 || b)
+
+end
+
+#eval! do convertInductToNew (← getConstInfoInduct ``TestInduct1)
+#eval! proveConstructorComputable ``TestInduct1.hiThere
+#eval! proveConstructorComputable ``TestInduct1.what
+#eval! proveConstructorComputable ``TestInduct1.oh
+#eval! proveConstructorComputable ``TestInduct2.abc
+#eval! proveConstructorComputable ``TestInduct2.xyz
+#eval! proveConstructorComputable ``TestInduct2.combine
+#print New.RecursorModel.TestInduct2._encoding.rec
+
+#eval! do proveNewRecursorPrim (← getConstInfoRec ``RecursorModel.TestInduct2.rec)
+#print New.RecursorModel.TestInduct2.rec.dprim
+
+end RecursorModel
