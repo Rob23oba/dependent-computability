@@ -142,12 +142,15 @@ def projToRec (nm : Name) (idx : Nat) (struct : Expr) : MetaM Expr := do
         | _ => .bvar (n - i - 1)
       let rec mkCasesOnApp (motive : Expr) (i : Nat) (indicesAndStruct : Array Expr) :
           MetaM Expr := do
+        let level ← getLevel motive
+        if propRecursor && !level.isAlwaysZero then
+          throwError "Invalid projection {Expr.proj nm idx struct}, \
+            {.ofConstName casesOn.name} only eliminates to {Expr.sort 0}"
         let levels ← if propRecursor then pure fn.constLevels!
-          else pure ((← getLevel motive) :: fn.constLevels!)
-        let expr := (casesOn.value.instantiateLevelParams casesOn.levelParams levels).beta params
-        let expr := .app expr (← mkLambdaFVars indexVars motive)
-        let expr := mkAppN expr indicesAndStruct
-        return .app expr (mkCtorNth ctorType i 0)
+          else pure (level :: fn.constLevels!)
+        let args := params.push (← mkLambdaFVars indexVars motive) ++ indicesAndStruct
+          |>.push (mkCtorNth ctorType i 0)
+        return (casesOn.value.instantiateLevelParams casesOn.levelParams levels).beta args
       let rec traverseCtor (type : Expr) (i : Nat) : MetaM Expr := do
         let .forallE nm t b bi := type |
           throwError "invalid projection {Expr.proj nm idx struct}"

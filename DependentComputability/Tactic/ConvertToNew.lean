@@ -9,7 +9,7 @@ def withNewVars (vars : Array Expr)
     (k : Array Expr → FVarIdMap Expr → MonadCacheT ExprStructEq Expr MetaM α) : MetaM α := do
   (go 0 {} #[]).run
 where
-  go (i : Nat) (extraMap : FVarIdMap Expr) (newVars : Array Expr) :
+  go (i : Nat := 0) (extraMap : FVarIdMap Expr) (newVars : Array Expr := #[]) :
       MonadCacheT ExprStructEq Expr MetaM α := do
     if h : i < vars.size then
       let varExpr := vars[i]
@@ -34,6 +34,22 @@ where
     else
       acc
   termination_by as.size - i
+
+/--
+Given `xss : Array (Array α)` as an array of length `n` where all elements have size `m`,
+returns `#[xss[0][0], ..., xs[m - 1][0], xs[1][0], ..., xs[m - 1][n - 1]]`.
+-/
+partial def Array.flattenSideways (xss : Array (Array α)) : Array α :=
+  go 0 0 #[]
+where
+  go (i j : Nat) (acc : Array α) : Array α :=
+    if h : j < xss.size then
+      if h : i < xss[j].size then
+        go i (j + 1) (acc.push xss[j][i])
+      else
+        acc
+    else
+      go (i + 1) 0 acc
 
 def Array.steps (as : Array α) (start step : Nat) : Array α :=
   if h : step = 0 then

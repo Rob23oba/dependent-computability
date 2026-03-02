@@ -614,7 +614,8 @@ def makeCtorEncodingProof (ctor : ConstructorVal) (isStruct : Bool) (levels : Li
   unless isStruct do
     return .const (mkNewInductEncodingName ctor.induct ++ shortName) levels
   forallTelescope ctor.type fun vars _body => do
-  withNewVars vars convertTypeSimpleNew fun newVars Map => do
+  withNewVars vars convertTypeSimpleNew fun newVars _extraMap => do
+  withImplicitBinderInfos vars do
     let params := vars.take ctor.numParams
     let newParams := newVars.take ctor.numParams
     let allParams := params.interleave newParams
@@ -738,18 +739,3 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
       let baseMap : FVarIdMap Expr := .insert {} ctx.fvarId! ctx'
       MonadCacheT.run <| go true 0 primResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
       MonadCacheT.run <| go false 0 compResult #[ctx] #[ctx, ctx'] ctor.numParams #[] baseMap
-
-#print Nat.Partrec.Code
-#eval! proveConstructorComputable ``Nat.Partrec.Code.zero
-#eval! proveConstructorComputable ``Nat.Partrec.Code.succ
-#eval! proveConstructorComputable ``Nat.Partrec.Code.left
-#eval! proveConstructorComputable ``Nat.Partrec.Code.right
-#eval! proveConstructorComputable ``Nat.Partrec.Code.pair
-#eval! proveConstructorComputable ``Nat.Partrec.Code.comp
-#eval! proveConstructorComputable ``Nat.Partrec.Code.prec
-#eval! proveConstructorComputable ``Nat.Partrec.Code.rfind'
-
-#eval! proveConstructorComputable ``Std.DHashMap.Raw.mk
-
-#print New.Std.DHashMap.Internal.AssocList
-#print Std.DHashMap.Raw.mk
