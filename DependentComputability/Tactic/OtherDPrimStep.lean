@@ -347,6 +347,8 @@ where
     | .forallE _ _ b _ => go b (acc + 1)
     | _ => acc
 
+set_option backward.do.legacy false
+
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     {ctx : Q(Sort clvl)} {res : Q($ctx → Sort rlvl)} (f : Q((a : $ctx) → $res a)) :
@@ -367,8 +369,8 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
   have : rlvl =QL imax t'lvl b'lvl := ⟨⟩
   have : $res =Q fun c => (x : $t' c) → $b' c x := ⟨⟩
   let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f x.1 x.2)
-  match prim with
-  | true | false => return q(.curry $proof)
+  return match prim with
+  | true | false => q(.curry $proof)
 
 -- assumes that `f` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
@@ -377,8 +379,8 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     M Q($(mkPred prim f)) := withIncRecDepth do
   withTraceNode `debug (return m!"{exceptEmoji ·} trying to solve goal{indentExpr f}") do
   if let .defEq _ := isAlwaysZeroQ rlvl then
-    match prim with
-    | true | false => return q(.proof)
+    return match prim with
+    | true | false => q(.proof)
   let .lam nm _ b bi := id f | unreachable!
   let b ← whnfFast b (← read).zeta
   b.withApp fun fn args => do

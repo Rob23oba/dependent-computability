@@ -252,6 +252,8 @@ def withHaveDeclQ [MonadControlT MetaM n] [Monad n]
     (k : (var : Q($type)) → n α) : n α :=
   withLetDecl name type val k (nondep := true)
 
+set_option backward.do.legacy false -- 7.5s to 1s time reduction!!!
+
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     {ctx_base : Q(Sort clvl)} {ctx : Q(new_type% $ctx_base)}
@@ -278,9 +280,9 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
   have : $res =Q new% fun c => (x : $t' c) → $b' c x := ⟨⟩
   let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f_base x.1 x.2)
     q(new% fun x : PSigma $t' => $f_base x.1 x.2)
-  match prim with
-  | true => return q(DPrimrec.curry (f_extra := new% $f_base) $proof)
-  | false => return q(DComputable.curry (f_extra := new% $f_base) $proof)
+  return match prim with
+  | true => q(DPrimrec.curry (f_extra := new% $f_base) $proof)
+  | false => q(DComputable.curry (f_extra := new% $f_base) $proof)
 
 -- assumes that `f_base` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
@@ -291,9 +293,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
   withTraceNode `debug (return m!"{exceptEmoji ·} trying to solve goal{indentExpr f}\n\
     with{indentExpr f_base}") do
   if let .defEq _ := isAlwaysZeroQ rlvl then
-    match prim with
-    | true => return q((DPrimrec.proof))
-    | false => return q((DComputable.proof))
+    return match prim with
+    | true => q((DPrimrec.proof))
+    | false => q((DComputable.proof))
   let .lam nm _ b bi := id f_base | unreachable!
   let b ← whnfFast b (← read).zeta
   b.withApp fun fn args => do
