@@ -12,7 +12,7 @@ maxSynthPendingDepth = 3
 [[require]]
 name = "mathlib"
 git = "https://github.com/leanprover-community/mathlib4-nightly-testing"
-rev = "a498e40459950bf54efd87d57baf5fb7c0378da6"
+rev = "477d626d6db87271dac80af33ce9a91071d00bee"
 
 [[lean_lib]]
 name = "DependentComputability"
