@@ -183,7 +183,11 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
         let some val := extraMap.get? f |
           throwError "invalid variable: {e} in\n{(← mkFreshExprMVar none).mvarId!}"
         return val
-      | .mvar _ => throwError "unexpected metavariable"
+      | .mvar _ =>
+        let e ← instantiateMVars e
+        if e.isMVar then
+          throwError "unexpected metavariable"
+        else visit e extraMap
       | .bvar _ => throwError "unexpected bound variable"
       | .mdata m e => return .mdata m (← visit e extraMap)
       | .proj t i e =>
@@ -341,8 +345,7 @@ inductive DPrimrec {α : Sort u} {α_extra : new_type% α}
   | intro (g : ℕ → ℕ) (hg : Nat.Primrec g)
     (hg' : ∀ ⦃a a_extra n⦄, @α_extra.2 a a_extra n → (β_extra a_extra).2 (f_extra a_extra) (g n))
 
-class FullyRepresentable {α : Sort u} (α_extra : new_type% α)
-    extends InhabitedExtra α_extra, SubsingletonExtra α_extra where
+class FullyRepresentable {α : Sort u} (α_extra : new_type% α) extends InhabitedExtra α_extra where
   isRepresentable : ∀ {x : α} (x : α_extra.1 x), IsRepresentable x
 
 class CompatibleEncodingRelation {α : Type u} (α_extra : new_type% α)

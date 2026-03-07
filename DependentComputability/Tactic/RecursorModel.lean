@@ -6,6 +6,7 @@ inductive FieldInfo where
   | irrelevant
   | nonRec
   | recursive (ind : ℕ)
+deriving Inhabited, Repr
 
 open Lean
 structure CtorDescr where
@@ -120,6 +121,9 @@ decreasing_by
   have h₂ := Nat.unpair_lt (n := val') <| Nat.pos_of_ne_zero <| by
     intro; simp_all +zetaDelta
   exact Nat.lt_of_le_of_lt h₁ h₂
+
+def structRecursorModel (descr : CtorDescr) (ctx : ℕ) (val : ℕ) : ℕ :=
+  descr.arm (pairAll ctx (addIrrelevant (unpackN val (countNonIrrelevant descr.args)) descr.args))
 
 theorem primrec_unpackN {n : ℕ} : Primrec (unpackN (n := n)) := by
   induction n with
@@ -284,6 +288,15 @@ theorem primrec_recursorModel (descr : MutualInductDescr) (ind : ℕ)
     intro _ _
     rw [model_eq]
 
+theorem primrec_structRecursorModel (descr : CtorDescr)
+    (f : ℕ → ℕ) (hf : Nat.Primrec f) :
+    Nat.Primrec (fun ctx => structRecursorModel descr ctx (f ctx)) := by
+  refine descr.primrec_arm.comp ?_
+  rw [← Primrec.nat_iff]
+  refine primrec_pairAll.comp .id ?_
+  refine primrec_addIrrelevant.comp ?_
+  exact primrec_unpackN.comp (Primrec.nat_iff.mpr hf)
+
 def myDescr : MutualInductDescr :=
   ⟨1, .ofArray #[.ofArray #[{
     arm x := x.unpair.2 + 2
@@ -297,6 +310,7 @@ def myDescr : MutualInductDescr :=
     args := [.nonRec]
   }] (by decide)] (by decide)⟩
 
+@[simp]
 theorem unpackN_pairAllInv (vals : List ℕ) : unpackN (pairAllInv vals) vals.length = vals := by
   rcases vals with _ | ⟨head, tail⟩
   · simp [pairAllInv, unpackN]
@@ -317,12 +331,20 @@ theorem recursorModel_pair_pairAllInv (descr : MutualInductDescr) (ctx cidx ind 
           addIHs args vals fun ind val _ => recursorModel descr ctx ind val)) := by
   rw [Bool.eq_false_iff, ne_eq, Nat.ble_eq] at h
   rw [recursorModel, if_neg h, Nat.unpair_pair]
-  simp [hargs, ← h', unpackN_pairAllInv]
+  simp [hargs, ← h']
+
+theorem structRecursorModel_pairAllInv (descr : CtorDescr) (ctx : ℕ) (vals : List ℕ)
+    (h' : vals.length = countNonIrrelevant descr.args) :
+    structRecursorModel descr ctx (pairAllInv vals) =
+      descr.arm (pairAll ctx (addIrrelevant vals descr.args)) := by
+  simp [structRecursorModel, ← h']
 
 theorem subst_encoding {α_base : Sort u} {α : new_type% α_base}
     {a_base : α_base} {a : new_type% a_base}
     {n m : ℕ} (h : n = m) : α.2 a m → α.2 a n := by
   subst h; exact id
+
+set_option backward.do.legacy false
 
 open Lean Meta Qq
 
@@ -380,6 +402,7 @@ def constructDPrim (e : Expr) : MetaM Expr := do
 
 abbrev M := MonadCacheT ExprStructEq Expr MetaM
 
+set_option backward.do.legacy false in
 def withDestructPrimrec (goalType : Q(Prop)) (prims : Array Expr)
     (k : Array ((f : Q(ℕ → ℕ)) × Q(Nat.Primrec $f) × Expr) → M Q($goalType)) :
     M Q($goalType) := do
@@ -388,14 +411,8 @@ where
   go (i : Nat) (acc : Array ((f : Q(ℕ → ℕ)) × Q(Nat.Primrec $f) × Expr)) : M Q($goalType) := do
     if h : i < prims.size then
       let decl ← prims[i].fvarId!.getDecl
-      let mkExtraApp (mkApp6 (.const ``New.DPrim [u, v]) α α' β β' f f') _ := decl.type |
-        unreachable!
-      have α : Q(Sort u) := α
-      have α' : Q(new_type% $α) := α'
-      have β : Q($α → Sort v) := β
-      have β' : Q(new_type% $β) := β'
-      have f : Q((a : $α) → $β a) := f
-      have f' : Q(new_type% $f) := f'
+      let mkExtraApp prim _ := decl.type | unreachable!
+      let q(@New.DPrim.{u, v} $α $α' $β $β' $f $f') := prim | unreachable!
       have e : Q(DPrimrec $f') := decl.toExpr
       withLocalDeclDQ (decl.userName.appendAfter "_f") q(ℕ → ℕ) fun fn => do
       withLocalDeclDQ (decl.userName.appendAfter "_fprim") q(Nat.Primrec $fn) fun fnprim => do
@@ -442,8 +459,11 @@ def infoToModelDescr (info : Array (Array (Nat × List FieldInfo)))
   let resArray : Q(RArray (RArray CtorDescr)) :=
     (RArray.ofArray! info).toExprQ fun entry =>
       (RArray.ofArray! entry).toExprQ fun (n, info) =>
-        have ⟨f, hf, _⟩ := minorsPrimData[n]!
-        q(CtorDescr.mk $f $hf $info)
+        if h : n < minorsPrimData.size then
+          have ⟨f, hf, _⟩ := minorsPrimData[n]
+          q(CtorDescr.mk $f $hf $info)
+        else
+          q(CtorDescr.mk (fun _ => 0) .zero []) -- happens when there are no constructors
   have n : Q(ℕ) := mkRawNatLit info.size
   q(MutualInductDescr.mk $n $resArray)
 
@@ -476,14 +496,6 @@ def mkRecursorModelDescrInfo (motives minors : Array Expr) :
     byMotive := byMotive.push minorsForMotive
   return byMotive
 
-def _root_.Lean.RecursorVal.largeElim (val : RecursorVal) : Bool :=
-  go val.numParams val.type
-where
-  go : ℕ → Expr → Bool
-    | 0, .forallE _ t _ _ => (t.getForallBody matches .sort (.param _))
-    | k + 1, .forallE _ _ b _ => go k b
-    | _, _ => false
-
 def addIrrelevantToExpr (l : List Q(ℕ)) (args : List FieldInfo) : List Q(ℕ) :=
   match args with
   | .irrelevant :: args => q(nat_lit 0) :: addIrrelevantToExpr l args
@@ -509,6 +521,9 @@ def createNewEncoding (descr : Q(MutualInductDescr)) (ctx : Q(ℕ))
   pairAllExprs ctx (addIrrelevantToExpr nums args ++
     addIHsToExpr args nums fun ind val => q(recursorModel $descr $ctx $ind $val))
 
+def createNewStructEncoding (ctx : Q(ℕ)) (args : List FieldInfo) (nums : List Q(ℕ)) : Q(ℕ) :=
+  pairAllExprs ctx (addIrrelevantToExpr nums args)
+
 theorem encodes_proof {p : Prop} {p_extra : new_type% p} {h : p} (h_extra : new_type% h) :
     p_extra.2 h_extra (nat_lit 0) := Irrelevant.encoding _
 
@@ -519,12 +534,12 @@ def constructPSigma (ty : Expr) (args : List Expr) (nfields : Nat)
   | [] => if nfields > 0 then a else mkAppN a (ty.getAppArgs.drop 1)
   | more@(b :: as) =>
     match ty with
-    | mkApp2 (.const ``PSigma [u, v]) α β =>
+    | q(PSigma.{u, v} $α $β) =>
       -- nfields = 0 => α is a motive application
       let fst := if nfields > 0 then a else mkAppN a (α.getAppArgs.drop 1)
       let snd := constructPSigma (β.betaRev #[fst]) more (nfields - 1)
       mkApp4 (.const ``PSigma.mk [u, v]) α β fst snd
-    | _ => unreachable!
+    | _ => panic! s!"{repr ty} is"
 
 def constructPSigmaEncoding (newSigma : Expr) (fieldInfos : List FieldInfo)
     (encs : List Expr) (encVal : Q(ℕ)) : MetaM Expr := do
@@ -538,14 +553,11 @@ def constructPSigmaEncoding (newSigma : Expr) (fieldInfos : List FieldInfo)
       have newSigma : Q(new_type% $proof) := newSigma
       return q(encodes_proof $newSigma)
     else
-      let mkApp2 (.const ``Nat.pair _) (xenc : Q(ℕ)) (yenc : Q(ℕ)) := encVal | unreachable!
+      let q(Nat.pair $xenc $yenc) := encVal | unreachable!
       have : $xenc =Q 0 := ⟨⟩
       have : $encVal =Q Nat.pair $xenc $yenc := ⟨⟩
-      let mkApp8 (.const ``New.PSigma.mk [_, v]) α α' β β' x x' y y' := newSigma | unreachable!
-      have α : Q(Prop) := α; have α' : Q(new_type% $α) := α'
-      have β : Q($α → Sort v) := β; have _β' : Q(new_type% $β) := β'
-      have x : Q($α) := x; have x' : Q(new_type% $x) := x'
-      have y : Q($β $x) := y; have y' : Q(new_type% $y) := y'
+      let q(@New.PSigma.mk.{u, v} $α $α' $β $β' $x $x' $y $y') := newSigma | unreachable!
+      have : u =QL 0 := ⟨⟩
       have xproof : Q($α'.2 $x' $xenc) := q(encodes_proof $x')
       let yproof : Q((new% $β $x).2 $y' $yenc) ← constructPSigmaEncoding y' infos encs yenc
       let proof : Q(@(new% PSigma $β).2 ⟨$x, $y⟩ ⟨$x', $y'⟩ $encVal) :=
@@ -556,27 +568,28 @@ def constructPSigmaEncoding (newSigma : Expr) (fieldInfos : List FieldInfo)
     if infos.isEmpty && encs.isEmpty then
       return enc
     else
-      let mkApp2 (.const ``Nat.pair _) (xenc : Q(ℕ)) (yenc : Q(ℕ)) := encVal | unreachable!
+      let q(Nat.pair $xenc $yenc) := encVal | unreachable!
       have : $encVal =Q Nat.pair $xenc $yenc := ⟨⟩
-      let mkApp8 (.const ``New.PSigma.mk [u, v]) α α' β β' x x' y y' := newSigma | unreachable!
-      have α : Q(Sort u) := α; have α' : Q(new_type% $α) := α'
-      have β : Q($α → Sort v) := β; have _β' : Q(new_type% $β) := β'
-      have x : Q($α) := x; have x' : Q(new_type% $x) := x'
-      have y : Q($β $x) := y; have y' : Q(new_type% $y) := y'
+      let q(@New.PSigma.mk.{u, v} $α $α' $β $β' $x $x' $y $y') := newSigma | unreachable!
       have xproof : Q($α'.2 $x' $xenc) := enc
       let yproof : Q((new% $β $x).2 $y' $yenc) ← constructPSigmaEncoding y' infos encs yenc
       let proof : Q(@(new% PSigma $β).2 ⟨$x, $y⟩ ⟨$x', $y'⟩ $encVal) :=
         q(⟨$xproof, $yproof⟩)
       return proof
+termination_by fieldInfos.length + encs.length
 
 def proveEncodingByInduction (info : RecursorVal)
-    (descrInfo : Array (Array (ℕ × List FieldInfo))) (descr : Q(MutualInductDescr))
+    (descrInfo : Array (Array (ℕ × List FieldInfo)))
     (ctxLvl elimLvl : Level) (ctx : Q(Sort ctxLvl)) (newCtx : Q(new_type% $ctx))
     (vars newVars : Array Expr)
     (minorsPrimData : Array ((f : Q(ℕ → ℕ)) × Q(Nat.Primrec «$f») × Expr))
     (majorFn majorenc : Expr)
     (c : Q($ctx)) (c' : Q(new_type% $c)) (cn : Q(ℕ)) (cenc : Q($newCtx.2 $c' $cn))
-    (extraMap : FVarIdMap Expr) :
+    (extraMap : FVarIdMap Expr)
+    (modelFn : Q((ind : ℕ) → (val : ℕ) → ℕ))
+    (newEncoding : List FieldInfo → List Q(ℕ) → Q(ℕ))
+    (modelThm : (cidx : Q(ℕ)) → (ind : Q(ℕ)) → (vals : Q(List ℕ)) →
+      (args : Q(List FieldInfo)) → Expr) :
     M Expr := do
   let .str inductName recSuffix := info.name | panic! "invalid recursor name"
   let encodingRecName := .str (mkNewInductEncodingName inductName) recSuffix
@@ -597,7 +610,7 @@ def proveEncodingByInduction (info : RecursorVal)
   let nonMajorVars := (vars.take info.getFirstIndexIdx).map (·.app c)
   let newNonMajorVars := (newVars.take info.getFirstIndexIdx).map (mkApp2 · c c')
   let allNonMajorVars := nonMajorVars.interleave newNonMajorVars
-  let allRecNames := info.all.map mkRecName
+  let allRecNames := info.allRecs
   let allRecs := allRecNames.map fun recName =>
     mkAppN (.const recName levels) nonMajorVars
   let allNewRecs := allRecNames.map fun recName =>
@@ -614,7 +627,7 @@ def proveEncodingByInduction (info : RecursorVal)
       let recApp := mkAppN recApp regularMajors
       let newRecApp := mkAppN newRecApp allMajors
       have motiveIdxLit : Q(ℕ) := mkRawNatLit motiveIdx
-      let model := q(recursorModel $descr $cn $motiveIdxLit $numVar)
+      let model := q($modelFn $motiveIdxLit $numVar)
       let motive := mkApp3 (.proj ``SortExtra 1 newType) recApp newRecApp model
       mkLambdaFVars motiveVars motive
     type := moreType
@@ -659,14 +672,8 @@ def proveEncodingByInduction (info : RecursorVal)
         have val : Q($motiveApp) := val
         have val' : Q(new_type% $val) := val'
         have valenc : Q(ℕ) := valenc
-        have proof1 : Q(($descr).numInducts.ble $motiveIdxLit = false) := reflBoolFalse
-        have proof2 : Q(((($descr).inducts.get $motiveIdxLit).get $cidxLit).args = $fieldInfos) :=
-          (q(rfl) : Q($fieldInfos = $fieldInfos))
-        have proof3 : Q(($vals).length = countNonIrrelevant $fieldInfos) :=
-          (q(rfl) : Q(($vals).length = ($vals).length))
-        have newenc : Q(ℕ) := createNewEncoding descr cn fieldInfos numberVars.toList
-        have thm : Expr := q(recursorModel_pair_pairAllInv $descr $cn $cidxLit $motiveIdxLit $vals
-          $fieldInfos $proof1 $proof2 $proof3)
+        have newenc : Q(ℕ) := newEncoding fieldInfos numberVars.toList
+        have thm : Expr := modelThm q($cidxLit) q($motiveIdxLit) q($vals) q($fieldInfos)
         have thm : Q($valenc = $minorFn $newenc) :=
           mkExpectedPropHint thm q($valenc = $minorFn $newenc)
         let .forallE _ encType _ _ ← inferType minorFnEnc | unreachable!
@@ -688,33 +695,67 @@ def proveEncodingByInduction (info : RecursorVal)
   proof := proof.app (mkApp4 majorenc c c' cn cenc)
   return proof
 
-partial def findBadFVar (e : Expr) : MetaM Bool := do
-  match e with
-  | .fvar f =>
-    if (← f.findDecl?).isNone then
-      return true
-    return false
-  | .mdata _ e' => findBadFVar e'
-  | .proj _ _ e' => findBadFVar e'
-  | .app f a =>
-    if ← findBadFVar f <||> findBadFVar a then
-      Lean.logInfo e
-      return true
-    return false
-  | .lam nm t b bi | .forallE nm t b bi =>
-    withLocalDecl nm bi t fun var =>
-      findBadFVar (b.instantiate1 var)
-  | .letE nm t v b nd =>
-    withLetDecl nm t v (nondep := nd) fun var =>
-      findBadFVar (b.instantiate1 var)
-  | .bvar _ | .mvar _ | .lit _ | .const .. | .sort _ => return false
+set_option backward.do.legacy true in
+def proveNewStructRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
+    (ctx : Q(Sort ctxLvl)) (newCtx : Q(new_type% $ctx))
+    (vars newVars : Array Expr)
+    (minorsPrim : Array Expr) (majorPrim : Expr)
+    (resultType : Q($ctx → Sort elimLvl)) (extraMap : FVarIdMap Expr) :
+    M Expr := do
+  let levels := info.levelParams.map Level.param
+  let recApp := mkAppN (.const info.name levels) (vars.map (.app · (.bvar 0)))
+  have recApp : Q((c : $ctx) → $resultType c) := .lam `c ctx recApp .default
+  let _newResultType : Q(new_type% $resultType) ← conversionStepNew.visit resultType extraMap
+  let newRecApp : Q(new_type% $recApp) ← conversionStepNew.visit recApp extraMap
+  let goalType : Q(Prop) := q(DPrimrec $newRecApp)
+  withDestructPrimrec goalType (minorsPrim.push majorPrim) fun primData => do
+  let minorPrimData@⟨mfn, mprim, _⟩ := primData[0]! -- minor
+  let ⟨tfn, tprim, tenc⟩ := primData[1]! -- major
+  let minor := vars[info.numParams + 1]!
+  let minorType ← inferType minor
+  let infos : List FieldInfo ← forallTelescope minorType fun vars _ => do
+    let mut infos : Array FieldInfo := #[]
+    for var in vars[1...*] do
+      if ← isProof var then
+        infos := infos.push .irrelevant
+      else
+        infos := infos.push .nonRec
+    return infos.toList
+  let descr := q(CtorDescr.mk $mfn $mprim $infos)
+  mapLetDecl `descr q(CtorDescr) descr fun descr => show M Q($goalType) from do
+  have descr : Q(CtorDescr) := descr
+  withLocalDeclDQ `c q($ctx) fun (c : Q($ctx)) => do
+  withLocalDeclDQ `c_extra q($newCtx.1 $c) fun (c' : Q(new_type% $c)) => do
+  withLocalDeclDQ `c_n q(ℕ) fun (cn : Q(ℕ)) => do
+  withLocalDeclDQ `c_enc q($newCtx.2 $c' $cn) fun (cenc : Q($newCtx.2 $c' $cn)) => do
+  let extraMap := extraMap.insert c.fvarId! c'
+  let goalType : Q(Prop) := q((new% $resultType $c).2 (new% $recApp $c)
+    (structRecursorModel $descr $cn ($tfn $cn)))
+  let res : Q($goalType) ← proveEncodingByInduction info #[#[(0, infos)]] ctxLvl elimLvl
+    ctx newCtx vars newVars #[minorPrimData] tfn tenc c c' cn cenc extraMap
+    (modelFn := q(fun _ => structRecursorModel $descr $cn))
+    (newEncoding := createNewStructEncoding cn)
+    (modelThm := fun _ _ vals _ =>
+      have proof : Q(($vals).length = countNonIrrelevant ($descr).args) :=
+        (q(rfl) : Q(($vals).length = ($vals).length))
+      q(structRecursorModel_pairAllInv $descr $cn $vals $proof))
+  let res : Q(∀ ⦃a : «$ctx»⦄ ⦃a_extra : new_type% a⦄ ⦃n : ℕ⦄, «$newCtx».2 a_extra n →
+    (new% «$resultType» a).2 (new% «$recApp» a)
+      (structRecursorModel $descr n («$tfn» n))) ←
+    mkLambdaFVars #[c, c', cn, cenc] res
+  return q(DPrimrec.intro _ (primrec_structRecursorModel $descr $tfn $tprim) $res)
 
+set_option backward.do.legacy true in
 def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
     (ctx : Q(Sort ctxLvl)) (newCtx : Q(new_type% $ctx))
     (vars newVars : Array Expr)
     (minorsPrim : Array Expr) (majorPrim : Expr)
     (resultType : Q($ctx → Sort elimLvl)) (extraMap : FVarIdMap Expr) :
     M Expr := do
+  if info.numIndices = 0 ∧ info.numMinors = 1 ∧ info.numMotives = 1 ∧
+      (← isStructureLikeWithLargeElim info.all[0]!) then
+    return ← proveNewStructRecursorPrimAux info ctxLvl elimLvl ctx newCtx vars newVars
+      minorsPrim majorPrim resultType extraMap
   let levels := info.levelParams.map Level.param
   let recApp := mkAppN (.const info.name levels) (vars.map (.app · (.bvar 0)))
   have recApp : Q((c : $ctx) → $resultType c) := .lam `c ctx recApp .default
@@ -739,8 +780,18 @@ def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
   let extraMap := extraMap.insert c.fvarId! c'
   let goalType : Q(Prop) := q((new% $resultType $c).2 (new% $recApp $c)
     (recursorModel $descr $cn $indLit ($tfn $cn)))
-  let res : Q($goalType) ← proveEncodingByInduction info descrInfo descr ctxLvl elimLvl
+  let res : Q($goalType) ← proveEncodingByInduction info descrInfo ctxLvl elimLvl
     ctx newCtx vars newVars minorsPrimData tfn tenc c c' cn cenc extraMap
+    (modelFn := q(recursorModel $descr $cn))
+    (newEncoding := createNewEncoding q($descr) q($cn))
+    (modelThm := fun cidxLit motiveIdxLit vals args =>
+      have proof1 : Q(($descr).numInducts.ble $motiveIdxLit = false) := reflBoolFalse
+      have proof2 : Q(((($descr).inducts.get $motiveIdxLit).get $cidxLit).args = $args) :=
+        (q(rfl) : Q($args = $args))
+      have proof3 : Q(($vals).length = countNonIrrelevant $args) :=
+        (q(rfl) : Q(($vals).length = ($vals).length))
+      q(recursorModel_pair_pairAllInv $descr $cn $cidxLit $motiveIdxLit $vals $args
+        $proof1 $proof2 $proof3))
   let res : Q(∀ ⦃a : «$ctx»⦄ ⦃a_extra : new_type% a⦄ ⦃n : ℕ⦄, «$newCtx».2 a_extra n →
     (new% «$resultType» a).2 (new% «$recApp» a)
       (recursorModel «$descr» n «$indLit» («$tfn» n))) ←
@@ -748,8 +799,10 @@ def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
   return q(DPrimrec.intro _ (primrec_recursorModel $descr $indLit $tfn $tprim) $res)
 
 open DPrimrec.Tactic.Other
-def proveNewRecursorPrim (info : RecursorVal) : MetaM Unit := do
-  recConvertToNew info.name
+def proveNewRecursorPrim (nm : Name) (dummyOnly : Bool := false) : MetaM Unit := do
+  recConvertToNew nm
+  let info ← getConstInfoRec nm
+  unless info.largeElim do return
   let ctxUniv := Elab.Term.mkFreshLevelName info.levelParams
   have ctxLvl := Level.param ctxUniv
   let type := info.type
@@ -817,6 +870,7 @@ def proveNewRecursorPrim (info : RecursorVal) : MetaM Unit := do
         #[.prim] -- major
   }
   modifyEnv (otherDPrimExt.addEntry · thmInfo)
+  if dummyOnly then return
   let realType ← convertTypeSimpleNew (.const dummyName (ctxLvl :: levels)) dummyType {}
   let realValue ← proveNewRecursorPrimAux info ctxLvl elimLvl ctx ctx' vars newVars
     minorsPrim majorPrim (.lam `c ctx bodyBody .default) extraMap
@@ -830,18 +884,279 @@ def proveNewRecursorPrim (info : RecursorVal) : MetaM Unit := do
 
 end RecursorModel
 
+set_option backward.do.legacy false
+
+open Lean Meta Qq
+def constructDComp (e : Expr) : MetaM Expr := do
+  let ty ← inferType e
+  let some ⟨u, v, α, β⟩ ← matchForallQ ty | unreachable!
+  have e : Q((a : $α) → $β a) := e
+  return q(DComp $e)
+
+def mkUnitEliminator (info : RecursorVal) (nonMajorVars : Array Expr) : MetaM Expr := do
+  let mut recApp : Expr := .const info.name (info.levelParams.map Level.param)
+  recApp := mkAppN recApp (nonMajorVars.take info.numParams)
+  let mut recType ← inferType recApp
+  let mut motiveVarSet : FVarIdSet := {}
+  let mut motiveVars : Array Expr := {}
+  let mut motives : Array Expr := {}
+  let mut lctx ← getLCtx
+  for motiveIdx in *...info.numMotives do
+    let .forallE nm ty body _ := recType | unreachable!
+    let var := nonMajorVars[info.numParams + motiveIdx]!
+    let arg ← forallTelescope ty fun vars _ => do
+      let app := mkAppN var vars
+      let res := .forallE `x (mkConst ``Unit) app .default
+      mkLambdaFVars vars res
+    let fvar ← mkFreshFVarId
+    lctx := lctx.mkLetDecl fvar nm ty arg
+    motiveVars := motiveVars.push (.fvar fvar)
+    motiveVarSet := motiveVarSet.insert fvar
+    motives := motives.push arg
+    recApp := recApp.app arg
+    recType := body
+  recType := recType.instantiateRev motiveVars
+  withLCtx' lctx do
+  let mut recApp := recApp
+  let mut recType := recType
+  for minorIdx in *...info.numMinors do
+    let var := nonMajorVars[info.getFirstMinorIdx + minorIdx]!
+    let .forallE _ ty body _ := recType | unreachable!
+    let arg ← forallTelescope ty fun vars _ => do
+      let mut res := var
+      for var in vars do
+        let type ← inferType var
+        let .fvar f := type.getForallBody.getAppFn | res := res.app var
+        unless motiveVarSet.contains f do
+          res := res.app var
+          continue
+        let arg ← forallTelescope type fun vars _ => do
+          mkLambdaFVars vars (.app (mkAppN var vars) (mkConst ``Unit.unit))
+        res := res.app arg
+      res := .lam `x (mkConst ``Unit) res .default
+      mkLambdaFVars vars res
+    recApp := recApp.app arg
+    recType := body
+  return (recApp.abstract motiveVars).instantiateBetaRevRange 0 motives.size motives
+
+def mkFunextFVars (xs : Array Expr) (h : Expr) : MetaM Expr := do
+  let q(Eq.{u} $type $lhs $rhs) ← whnfCore (← inferType h) |
+    throwError "invalid mkFunExtFVars, expected equality"
+  let type ← type.abstractM xs
+  let lhs ← lhs.abstractM xs
+  let rhs ← rhs.abstractM xs
+  let proof ← h.abstractM xs
+  let rec go (i : Nat) : MetaM <| (u : Level) × (α : Q(Sort u)) × (a b : Q($α)) × Q($a = $b) := do
+    if h : i < xs.size then
+      let ⟨v, β, a, b, h⟩ ← go (i + 1)
+      let x := xs[i]
+      let decl ← x.fvarId!.getDecl
+      let nm := decl.userName
+      let bi := decl.binderInfo
+      let xTy := decl.type
+      let u ← getLevel xTy
+      let xTy : Q(Sort u) ← xTy.abstractRangeM i xs
+      let x : Q($xTy) ← x.abstractRangeM i xs
+      have β' : Q($xTy → Sort v) := .lam nm xTy β bi
+      have f : Q((a : $xTy) → $β' a) := .lam nm xTy a bi
+      have g : Q((a : $xTy) → $β' a) := .lam nm xTy b bi
+      have h : Q((a : $xTy) → $f a = $g a) := .lam nm xTy h bi
+      let proof : Q($f = $g) := q(funext $h)
+      return ⟨u.imax v, .forallE nm xTy β bi, f, g, proof⟩
+    else
+      return ⟨u, type, lhs, rhs, proof⟩
+  termination_by xs.size - i
+  let ⟨_u, _α, _a, _b, h⟩ ← go 0
+  return h
+
+def mkEliminatorUnitFunEqThm (info : RecursorVal) (nonMajorVars : Array Expr) : MetaM Expr := do
+  let elim ← mkUnitEliminator info nonMajorVars
+  let elimArgs := elim.getAppArgs
+  let levels := info.levelParams.map Level.param
+  let mut recApp : Expr := .const info.name (.zero :: levels.tail)
+  have elimLvl : Level := .param info.levelParams.head!
+  recApp := mkAppN recApp (nonMajorVars.take info.numParams)
+  let mut recType ← inferType recApp
+  let mut motiveVarSet : FVarIdSet := {}
+  let mut motiveVars : Array Expr := {}
+  let mut motives : Array Expr := {}
+  let mut lctx ← getLCtx
+  for motiveIdx in *...info.numMotives, recName in info.allRecs do
+    let .forallE nm ty body _ := recType | unreachable!
+    let var := nonMajorVars[info.numParams + motiveIdx]!
+    let arg ← forallTelescope ty fun vars _ => do
+      have ty : Q(Sort elimLvl) := mkAppN var vars
+      have lhs : Q($ty) := .app (mkAppN (mkAppN (.const recName levels) elimArgs) vars) q(())
+      have rhs : Q($ty) := mkAppN (mkAppN (.const recName levels) nonMajorVars) vars
+      mkLambdaFVars vars q($lhs = $rhs)
+    let fvar ← mkFreshFVarId
+    lctx := lctx.mkLetDecl fvar nm ty arg
+    motiveVars := motiveVars.push (.fvar fvar)
+    motiveVarSet := motiveVarSet.insert fvar
+    motives := motives.push arg
+    recApp := recApp.app arg
+    recType := body
+  recType := recType.instantiateRev motiveVars
+  withLCtx' lctx do
+  let mut recApp := recApp
+  let mut recType := recType
+  for minorIdx in *...info.numMinors do
+    let var := nonMajorVars[info.getFirstMinorIdx + minorIdx]!
+    let varType ← inferType var
+    let .forallE _ ty body _ := recType | unreachable!
+    let arg ← forallTelescope ty fun vars _ => do
+      let mut type := varType
+      let mut lhs := var
+      let mut rhs := var
+      let mut proof? : Option Expr := none
+      for var in vars do
+        let varType ← inferType var
+        let .fvar f := varType.getForallBody.getAppFn |
+          assert! proof?.isNone
+          lhs := lhs.app var; rhs := lhs; type ← instantiateForall type #[var]
+        unless motiveVarSet.contains f do
+          assert! proof?.isNone
+          lhs := lhs.app var; rhs := lhs; type ← instantiateForall type #[var]
+          continue
+        let .forallE _ _ bb _ := type | unreachable!
+        let v ← getLevel bb
+        have bb : Q(Sort v) := bb
+        let res ← forallTelescope varType fun vars _ => do
+          mkFunextFVars vars (mkAppN var vars)
+        let q(Eq.{u} $type' $lhs' $rhs') ← whnfCore (← inferType res) | unreachable!
+        have res : Q($lhs' = $rhs') := res
+        have lhsQ : Q($type' → $bb) := lhs
+        have _rhsQ : Q($type' → $bb) := rhs -- damn you unused variable linter
+        proof? := match proof? with
+          | none => q(congrArg $lhsQ $res)
+          | some (h' : Q($lhsQ = $_rhsQ)) => q(congr $h' $res)
+        type := bb
+        lhs := lhs.app lhs'
+        rhs := rhs.app rhs'
+      let mut res ← match proof? with
+        | some proof => pure proof
+        | none => pure <| mkApp2 (.const ``rfl [← getLevel type]) type lhs
+      mkLambdaFVars vars res
+    recApp := recApp.app arg
+    recType := body
+  return (recApp.abstract motiveVars).instantiateBetaRevRange 0 motives.size motives
+
+set_option backward.do.legacy false
+open DPrimrec.Tactic in
+def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
+  let info ← getConstInfoRec decl
+  unless info.largeElim do return
+  let ctxUniv := Elab.Term.mkFreshLevelName info.levelParams
+  have ctxLvl : Level := .param ctxUniv
+  withLocalDeclQ `ctx .implicit q(Sort ctxLvl) fun (ctx : Q(Sort ctxLvl)) =>
+  let e := insertContextType info.type ctx info.type.getForallArity
+  lambdaTelescope e fun vars body => do
+  let minors := vars.extract info.getFirstMinorIdx info.getFirstIndexIdx
+  let minorsCompInfos ← minors.mapM fun minor => do
+    let nm ← minor.fvarId!.getUserName
+    let ty ← constructDComp minor
+    return (nm.appendAfter "_comp", ty)
+  withLocalDeclsDND minorsCompInfos fun minorsComp => do
+  let major := vars[info.getMajorIdx]!
+  let majorCompType ← constructDComp major
+  withLocalDeclD `t_comp majorCompType fun majorComp => do
+    let ctxUniv' := Elab.Term.mkFreshLevelName (ctxUniv :: info.levelParams)
+    let mut compContext : Other.Context := {
+      contextUniv := ctxUniv'
+      localPrimThms := {}
+      localCompThms := {}
+      zeta := false
+    }
+    for comp in minorsComp.push majorComp do
+      let q(@DComp.{u, v} $_α $_β $f) ← inferType comp | unreachable!
+      have comp : Q(DComp $f) := comp
+      compContext := Other.withBasicLocalThm.newContext false q($comp) compContext
+    let helperThm ← withLocalDeclD `c ctx fun c => do
+      let nonMajorVars := (vars.take info.getFirstIndexIdx).map (·.app c)
+      let majorVars := (vars.drop info.getFirstIndexIdx).map (·.app c)
+      let thm ← mkEliminatorUnitFunEqThm info nonMajorVars
+      let thm := mkAppN thm majorVars
+      mkFunextFVars #[c] thm
+    let q(Eq.{u} $α $lhs $rhs) ← inferType helperThm | unreachable!
+    have helperThm : Q($lhs = $rhs) := helperThm
+    let .forallE _ _ bodyBody _ := body | unreachable!
+    let elimLvl ← withLocalDeclD `c ctx fun var => getLevel (bodyBody.instantiate1 var)
+    have body : Q($ctx → Sort elimLvl) := .lam `c ctx bodyBody .default
+    have : u =QL imax ctxLvl elimLvl := ⟨⟩
+    have : $α =Q ((c : $ctx) → $body c) := ⟨⟩
+    let result : Q(DComp $lhs) ← withLocalDeclDQ `c ctx fun var => do
+      let mkApp2 lhs' _ _ := lhs.betaRev #[var] | unreachable!
+      let some ⟨v, w, β, γ⟩ ← matchForallQ (← inferType lhs') | unreachable!
+      have : w =QL elimLvl := ⟨⟩
+      let γ : Q($α → Sort w) ← withLocalDeclD `t α fun var' => do
+        mkLambdaFVars #[var'] (γ.betaRev #[var']).bindingBody!
+      let β : Q($ctx → Sort v) ← mkLambdaFVars #[var] β
+      let γ : Q((c : $ctx) → $β c → Sort w) ← mkLambdaFVars #[var] γ
+      let lhs' : Q((c : $ctx) → (a : $β c) → Unit → $γ c a) ← mkLambdaFVars #[var] lhs'
+      have major : Q((c : $ctx) → $β c) := major
+      have majorComp : Q(DComp $major) := majorComp
+      have : $body =Q fun c => $γ c ($major c) := ⟨⟩
+      have : $lhs =Q fun c => $lhs' c ($major c) () := ⟨⟩
+      let result : Q(DPrim fun c : PSigma $β ↦ $lhs' c.1 c.2) ←
+        (Other.solveDPrimGoal true q(fun c : PSigma $β ↦ $lhs' c.1 c.2)).run compContext
+      return q(.app (.app (.curry (.of_prim $result)) $majorComp) Unit.unit.dcomp)
+    have result : Q(DComp $rhs) := q(Eq.subst $helperThm $result)
+    let paramsAndMotives := vars.take info.getFirstMinorIdx
+    let indices := vars.extract info.getFirstIndexIdx info.getMajorIdx
+    let allVars := #[show Expr from ctx] ++ paramsAndMotives ++
+      minors.interleave minorsComp ++ indices |>.push major |>.push majorComp
+    let value ← mkLambdaFVars allVars result
+    let type ← mkForallFVars allVars q(DComp $rhs)
+    let thmName := info.name ++ `dcomp
+    addDecl <| .thmDecl {
+      name := thmName
+      levelParams := ctxUniv :: info.levelParams
+      type := type
+      value := value
+    }
+    let thmInfo := {
+      prim := false
+      declName := info.name
+      thmName
+      paramInfos :=
+        Array.replicate info.getFirstMinorIdx .always ++ -- params and motives
+          Array.replicate info.numMinors .computable ++ -- minors
+          Array.replicate info.numIndices .always ++ -- indices
+          #[.computable] -- major
+    }
+    modifyEnv (Other.otherDPrimExt.addEntry · thmInfo)
+
+/-!
+Special cases we handled manually in SortExtra.lean
+-/
+
+set_option linter.hashCommand false
+
+#eval! RecursorModel.proveNewRecursorPrim ``List.rec true
+#eval! RecursorModel.proveNewRecursorPrim ``Lean.Syntax.rec true
+#eval! RecursorModel.proveNewRecursorPrim ``Array.rec true
+
+@[other_dprim]
+theorem List.nil.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u} :
+    DPrim fun c => @List.nil (α c) := .unsafeIntro
+
+@[other_dprim]
+theorem List.nil.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u} :
+    DComp fun c => @List.nil (α c) := .of_prim List.nil.dprim
+
 set_option linter.unusedVariables false in
 @[other_dprim]
-theorem List.rec.dprim.{c, u_1} {ctx : Sort c}
-    {α : ctx → Type u} {motive : (c : ctx) → List (α c) → Sort u_1}
-    {nil : (c : ctx) → motive c []} (nil_comp : DPrim nil)
-    {cons : (c : ctx) → (head : α c) → (tail : List (α c)) →
-      (ih : motive c tail) → motive c (head :: tail)}
-    (cons_comp : DPrim
-      fun x : (c : ctx) ×' (head : α c) ×' (tail : List (α c)) ×'
-        motive c tail => cons x.1 x.2.1 x.2.2.1 x.2.2.2)
-    {t : (c : ctx) → List (α c)} (t_comp : DPrim t) :
-    DPrim (fun c => @List.rec (α c) (motive c) (nil c) (cons c) (t c)) := .unsafeIntro
+theorem List.cons.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
+    {head : (c : ctx) → α c} (head_prim : DPrim head)
+    {tail : (c : ctx) → List (α c)} (tail_prim : DPrim tail) :
+    DPrim fun c => @List.cons (α c) (head c) (tail c) := .unsafeIntro
+
+@[other_dprim]
+theorem List.cons.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u}
+    {head : (c : ctx) → α c} (head_comp : DComp head)
+    {tail : (c : ctx) → List (α c)} (tail_comp : DComp tail) :
+    DComp fun c => @List.cons (α c) (head c) (tail c) :=
+  .app (.app (.curry (.curry (.of_prim <| by other_dcomp_tac))) head_comp) tail_comp
 
 open RecursorModel Delab
 theorem _root_.New.List.rec.dprim.{c, u_1, u} : new_type% @List.rec.dprim.{c, u_1, u} := by
@@ -877,3 +1192,208 @@ theorem _root_.New.List.rec.dprim.{c, u_1, u} : new_type% @List.rec.dprim.{c, u_
         (nil_base c_base) (cons_base c_base) tail_base⟩
       ⟨c, head, tail, New.List.rec (α c) (motive c) (nil c) (cons c) tail⟩ _
       ⟨hcn, head_enc, tail_enc, tail_ih⟩
+
+theorem _root_.New.List.nil.dprim.{c, u} : new_type% @List.nil.dprim.{c, u} := by
+  intro ctx ctx' α α'
+  refine ⟨_, .const (Nat.pair 0 1), ?_⟩
+  intros; exact .nil
+
+theorem _root_.New.List.cons.dprim.{c, u} : new_type% @List.cons.dprim.{c, u} := by
+  intro ctx ctx' α α' f f' ⟨⟩ ⟨ff, hff, hff'⟩ g g' ⟨⟩ ⟨fg, hfg, hfg'⟩
+  refine ⟨_, .pair (.pair hff hfg) (.const 2), ?_⟩
+  intro c c' cn hcn
+  exact .cons (hff' hcn) (hfg' hcn)
+
+theorem _root_.New.Array.rec.dprim.{c, u_1, u} : new_type% @Array.rec.dprim.{c, u_1, u} := by
+  intro c c' α α' m m' l l' ⟨⟩ ⟨fl, hfl, hfl'⟩ t t' ⟨⟩ ⟨ft, hft, hft'⟩
+  refine ⟨_, .comp hfl (.pair .id hft), ?_⟩
+  intro c c' cn hcn
+  exact @hfl' _ (new% ⟨c, (t c).1⟩) (Nat.pair cn (ft cn)) ⟨hcn, (hft' hcn).1⟩
+
+set_option linter.unusedVariables false in
+@[other_dprim]
+theorem Array.mk.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
+    {toList : (c : ctx) → List (α c)} (toList_prim : DPrim toList) :
+    DPrim fun c => @Array.mk (α c) (toList c) := .unsafeIntro
+
+@[other_dprim]
+theorem Array.mk.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u}
+    {toList : (c : ctx) → List (α c)} (toList_comp : DComp toList) :
+    DComp fun c => @Array.mk (α c) (toList c) :=
+  .app (.curry (.of_prim <| by other_dcomp_tac)) toList_comp
+
+@[other_dprim]
+theorem False.rec.dprim.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u}
+    {t : ctx → False} : DPrim fun c ↦ False.rec (motive c) (t c) := .unsafeIntro
+
+@[other_dprim]
+theorem False.rec.dcomp.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u}
+    {t : ctx → False} : DComp fun c ↦ False.rec (motive c) (t c) := .of_prim False.rec.dprim
+
+theorem _root_.New.False.rec.dprim.{c, u} : new_type% @False.rec.dprim.{c, u} := by
+  intro ctx ctx' m m' t t'
+  refine ⟨_, .zero, ?_⟩
+  intro a
+  exact (t a).elim
+
+@[other_dprim]
+theorem Eq.rec.dprim.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : ctx) → α c}
+    {motive : (c : ctx) → (b : α c) → a c = b → Sort u_1}
+    {refl : (c : ctx) → motive c (a c) (Eq.refl (a c))} (refl_prim : DPrim refl)
+    {b : (c : ctx) → α c} {t : (c : ctx) → a c = b c} :
+    DPrim fun c ↦ @Eq.rec (α c) (a c) (motive c) (refl c) (b c) (t c) := by
+  cases funext t
+  apply refl_prim
+
+@[other_dprim]
+theorem Eq.rec.dcomp.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : ctx) → α c}
+    {motive : (c : ctx) → (b : α c) → a c = b → Sort u_1}
+    {refl : (c : ctx) → motive c (a c) (Eq.refl (a c))} (refl_comp : DComp refl)
+    {b : (c : ctx) → α c} {t : (c : ctx) → a c = b c} :
+    DComp fun c ↦ @Eq.rec (α c) (a c) (motive c) (refl c) (b c) (t c) := by
+  cases funext t
+  apply refl_comp
+
+open DPrimrec.Tactic.Other (hasDCompThm hasDPrimThm) in
+partial def recAutoDComp (nm : Name) : StateRefT Lean.NameSet MetaM Unit := do
+  if ← hasDCompThm nm then
+    return
+  if (← get).contains nm then
+    -- blacklisted as noncomputable
+    return
+  let info ← getConstInfo nm
+  match info with
+  | .defnInfo val =>
+    handleDependencies val.value
+    autoDComp nm
+  | .ctorInfo _ =>
+    proveConstructorComputable nm
+  | .recInfo _ =>
+    unless ← hasDPrimThm nm do
+      RecursorModel.proveNewRecursorPrim nm
+    proveEliminatorDCompFromDPrim nm
+  | .thmInfo _ => pure ()
+  | .axiomInfo _ => throwError "can't handle axiom {.ofConstName nm}"
+  | .opaqueInfo _ => throwError "can't handle opaque {.ofConstName nm}"
+  | .quotInfo _ => pure ()
+  | .inductInfo _ => pure ()
+where
+  findDependencies (val : Expr) : MonadCacheT Expr Unit (StateRefT NameSet MetaM) Unit := do
+    checkCache val fun _ => Meta.withIncRecDepth do
+      match val with
+      | .const nm _ => modify fun set => set.insert nm
+      | .app f a => findDependencies f; findDependencies a
+      | .lam _ _ b _ => findDependencies b
+      | .letE _ _ v b _ => findDependencies v; findDependencies b
+      | .proj t _ e => modify fun set => set.insert (mkRecName t); findDependencies e
+      | .mdata _ e => findDependencies e
+      | _ => pure ()
+  handleDependencies (val : Expr) : StateRefT NameSet MetaM Unit := do
+    let mut (_, candidates) ← (findDependencies val).run.run {}
+    for c in candidates do
+      let env ← getEnv
+      try
+        recAutoDComp c
+      catch _ =>
+        setEnv env
+        modify fun blacklist => blacklist.insert c
+
+def recAutoDCompMain (nm : Name) : MetaM Unit := do
+  StateRefT'.run' (s := {}) do
+    let env ← getEnv
+    try
+      recAutoDComp nm
+    catch ex =>
+      setEnv env
+      throwError "{ex.toMessageData}\nblacklisted: {(← get).toArray}"
+    Lean.logInfo m!"blacklist: {(← get).toArray}"
+
+#eval! recAutoDCompMain ``String.all
+#eval! recAutoDCompMain ``Nat.gcd
+#eval! recAutoDCompMain ``List.mapM
+#eval! recAutoDCompMain ``List.filterMapM
+#eval! recAutoDCompMain ``List.filterMapTR
+
+#eval! recAutoDCompMain ``List.eraseDups
+
+convert_to_new List.eraseDups.dcomp
+convert_to_new List.filterMapM.dcomp
+
+instance {s : String.Slice} {s' : new_type% s}
+    {a : s.Pos} {a' : new_type% a}
+    {b : s.Pos} {b' : new_type% b} :
+    InhabitedExtra (new% a < b) where
+  default x := InhabitedExtra.default (α_extra := new% a.offset.byteIdx < b.offset.byteIdx) x
+
+def _root_.New.Lean.opaqueId.{u} : new_type% @Lean.opaqueId.{0} :=
+  fun _ _ _ h => (fun _ => _root_.Lean.opaqueId h) (Sort u)
+
+#time convert_to_new String.all.dcomp
+
+#print New.Subsingleton._induct
+
+def weirdType (b : Bool) : Type 1 :=
+  match b with
+  | false => ULift Nat
+  | true => Type
+
+def weirdValue (b : Bool) : weirdType b :=
+  match b with
+  | false => .up 1234
+  | true => Bool
+
+def weirdFunction (x : weirdType b) : Nat :=
+  match b with
+  | false => x.down
+  | true => 24
+
+def myFunction (x : Bool) : Nat :=
+  weirdFunction (weirdValue x)
+
+#eval! recAutoDCompMain ``myFunction
+convert_to_new myFunction.dcomp
+
+#eval! recAutoDCompMain ``Part.instMonad
+
+#eval! recAutoDCompMain ``Nat.rfind
+convert_to_new Nat.rfind.dcomp
+
+#print New.Nat.rfindX.dcomp
+
+#check Part.unwrap
+#print HAdd.hAdd.dcomp
+
+#print myFunction.dcomp
+
+#print Eq.rec.dprim
+#eval! recAutoDCompMain ``Quotient.rec
+convert_to_new Quotient.rec.dcomp
+
+#print DComp
+#print New.Quotient.rec.dcomp
+#print Quot.rec.dcomp
+#eval! recAutoDCompMain ``Finset.sumEquiv
+
+#print List.eq_nil_iff_forall_not_mem
+
+private lemma List.eq_nil_iff_forall_not_mem._alt :
+    type_of% @List.eq_nil_iff_forall_not_mem.{u} := by
+  intro α l
+  rcases l with _ | ⟨a, l⟩
+  · simp
+  · apply iff_of_false
+    · simp
+    · intro h
+      exact h a List.mem_cons_self
+
+convert_to_new List.eq_nil_iff_forall_not_mem._alt
+
+lemma _root_.New.List.eq_nil_iff_forall_not_mem :
+    new_type% @List.eq_nil_iff_forall_not_mem.{u} := by
+  exact new% @List.eq_nil_iff_forall_not_mem._alt.{u}
+
+convert_to_new Finset.sumEquiv.dcomp
+
+#print Finset.sumEquiv.dcomp
+
+#synth InhabitedExtra New.Nat

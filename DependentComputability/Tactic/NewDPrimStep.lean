@@ -1,4 +1,3 @@
-import DependentComputability.SortExtra
 import DependentComputability.Tactic.OtherDPrimStep
 
 namespace DPrimrec.Tactic
@@ -170,13 +169,6 @@ partial def whnfFast (e : Expr) (zeta : Bool) (argsRev : Array Expr := #[]) : Me
       return argsRev.foldr (fun a f => f.app a) e
   | _ => return argsRev.foldr (fun a f => f.app a) e
 
-def matchFunctionType (e : Expr) : MetaM (Level × Expr × Level × Expr) := do
-  let fty ← whnfD e
-  let .forallE nm tt bb bi := fty | throwFunctionExpected e
-  withLocalDeclD `x tt fun x => do
-    let bb' := bb.instantiate1 x
-    return (← getLevel tt, tt, ← getLevel bb', .lam nm tt bb bi)
-
 structure LocalThm where
   value : Expr
   paramInfos : Array ParamComputability
@@ -232,25 +224,6 @@ where
       let value := q(@DComputable.comp.{u} _ _ _ _ _ _ $val_comp)
       let thm : LocalThm := { value := by exact value, paramInfos := #[.computable] }
       { c with localCompThms := c.localCompThms.insert val_base.fvarId! thm }
-
-@[inline]
-def isAlwaysZeroQ (lvl : Level) : MaybeLevelDefEq lvl Level.zero :=
-  if lvl.isAlwaysZero then
-    .defEq ⟨⟩
-  else
-    .notDefEq
-
-@[inline]
-def withLetDeclQ [MonadControlT MetaM n] [Monad n]
-    (name : Name) {type : Q(Sort u)} (val : Q($type))
-    (k : (var : Q($type)) → $var =Q $val → n α) : n α :=
-  withLetDecl name type val (fun e => k e ⟨⟩)
-
-@[inline]
-def withHaveDeclQ [MonadControlT MetaM n] [Monad n]
-    (name : Name) {type : Q(Sort u)} (val : Q($type))
-    (k : (var : Q($type)) → n α) : n α :=
-  withLetDecl name type val k (nondep := true)
 
 set_option backward.do.legacy false -- 7.5s to 1s time reduction!!!
 
@@ -446,16 +419,12 @@ end
 partial def isTriviallyIrrelevant (e : Expr) : Option Expr := do
   if let .const ``New.Sort [u] := e then
     return q(instIrrelevantSort.{u})
-  else if let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := e then
-    let .lam nm t (.lam nm' t' b' bi') bi := β | none
-    have α_base : Q(Sort u) := α_base
-    have α : Q(new_type% $α_base) := α
-    have β_base : Q($α_base → Sort v) := β_base
-    have β : Q(new_type% $β_base) := β
-    let _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) ←
+  else if let q(@New.Forall.{u, v} $α $α_extra $β $β_extra) := e then
+    let .lam nm t (.lam nm' t' b' bi') bi := id β_extra | none
+    let _inst : Q(∀ ⦃a : $α⦄ (a_extra : new_type% a), Irrelevant ($β_extra a_extra)) ←
       (isTriviallyIrrelevant b').map fun x =>
         .lam nm t (.lam nm' t' x bi') bi
-    return q(instIrrelevantForall $α $β)
+    return q(instIrrelevantForall $α_extra $β_extra)
   else
     none
 
@@ -484,29 +453,18 @@ elab "dcomp_tac" : tactic => do
   }
   for decl in (← getLCtx) do
     let type ← whnfR decl.type
-    if let mkApp6 (.const ``DComputable [tlvl, blvl])
-        t_base t b_base b f_base@(.fvar _) f := type then
-      --Lean.logInfo decl.toExpr
-      have t_base : Q(Sort tlvl) := t_base
-      have _t : Q(new_type% $t_base) := t
-      have b_base : Q($t_base → Sort blvl) := b_base
-      have _b : Q(new_type% $b_base) := b
-      have f_base : Q((x : $t_base) → $b_base x) := f_base
-      have f : Q(new_type% $f_base) := f
-      have e : Q(DComputable $f) := decl.toExpr
-      context := withBasicLocalThm.newContext false q($f) q($e) context
+    if let q(@DComputable.{tlvl, blvl} $_ $_ $_ $_ $f $f_extra) := type then
+      unless f.isFVar do continue
+      have e : Q(DComputable $f_extra) := decl.toExpr
+      context := withBasicLocalThm.newContext false q($f_extra) q($e) context
     else if let mkExtraApp ty x@(.fvar _) := type then
-      let mkApp4 (.const ``New.Forall [u, v]) α_base α β_base β := ty | continue
-      let .lam nm t (.lam nm' t' b' bi') bi := β | continue
-      have α_base : Q(Sort u) := α_base
-      have α : Q(new_type% $α_base) := α
-      have β_base : Q($α_base → Sort v) := β_base
-      have β : Q(new_type% $β_base) := β
+      let q(@New.Forall.{u, v} $α $α_extra $β $β_extra) := ty | continue
+      let .lam nm t (.lam nm' t' b' bi') bi := id β_extra | continue
       let some b'irrel := isTriviallyIrrelevant b' | continue
-      have _inst : Q(∀ ⦃a_base : $α_base⦄ (a : $α.1 a_base), Irrelevant ($β a)) :=
+      have _inst : Q(∀ ⦃a : $α⦄ (a_extra : new_type% a), Irrelevant ($β_extra a_extra)) :=
         .lam nm t (.lam nm' t' b'irrel bi') bi
-      have x : Q((a : $α_base) → $β_base a) := x
-      have f : Q((New.Forall $α $β).1 $x) := decl.toExpr
+      have x : Q((a : $α) → $β a) := x
+      have f : Q((New.Forall $α_extra $β_extra).1 $x) := decl.toExpr
       have e : Q(DPrimrec $f) := q((DPrimrec.irrelevant))
       context := withBasicLocalThm.newContext true q($f) q($e) context
   let baseMap ← populateBaseMap

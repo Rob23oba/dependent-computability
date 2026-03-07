@@ -1,4 +1,5 @@
 import DependentComputability.SortExtra
+import DependentComputability.Tactic.Util
 
 inductive DComp {α : Sort u} {β : α → Sort v} (f : (a : α) → β a) : Prop where
   | unsafeIntro
@@ -139,15 +140,19 @@ open Lean Meta Elab Term Tactic Qq
 
 def projToFn (x : Expr) : MetaM Expr := do
   if let .proj t i e := x then
-    let info := getStructureInfo (← getEnv) t
-    let some name := info.getProjFn? i |
-      throwError "bad projection: field index {i} out of bounds for type {t}"
-    let type ← inferType e
-    let type ← whnfD type
-    type.withApp fun c args => do
-      unless c.isConstOf t do
-        throwError "bad projection: structure type name mismatch"
-      return .app (mkAppN (.const name c.constLevels!) args) e
+    if t == ``PSigma then
+      let name ← match i with
+        | 0 => pure ``PSigma.fst
+        | 1 => pure ``PSigma.snd
+        | _ => throwError "bad projection: field index {i} out of bounds for type {t}"
+      let type ← inferType e
+      let type ← whnfD type
+      type.withApp fun c args => do
+        unless c.isConstOf t do
+          throwError "bad projection: structure type name mismatch"
+        return .app (mkAppN (.const name c.constLevels!) args) e
+    else
+      projToRec t i e
   else
     return x
 
@@ -180,6 +185,12 @@ initialize otherDPrimExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorem
       xss.foldl (init := {}) fun acc xs => xs.foldl (init := acc)
         fun acc x => acc.add x
   }
+
+def hasDPrimThm (nm : Name) : CoreM Bool := do
+  return (otherDPrimExt.getState (← getEnv)).primTheorems.contains nm
+
+def hasDCompThm (nm : Name) : CoreM Bool := do
+  return (otherDPrimExt.getState (← getEnv)).compTheorems.contains nm
 
 def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
   let val ← getConstVal thm
@@ -273,13 +284,6 @@ partial def whnfFast (e : Expr) (zeta : Bool) (argsRev : Array Expr := #[]) : Me
       return argsRev.foldr (fun a f => f.app a) e
   | _ => return argsRev.foldr (fun a f => f.app a) e
 
-def matchFunctionType (e : Expr) : MetaM (Level × Expr × Level × Expr) := do
-  let fty ← whnfD e
-  let .forallE nm tt bb bi := fty | throwFunctionExpected e
-  withLocalDeclD `x tt fun x => do
-    let bb' := bb.instantiate1 x
-    return (← getLevel tt, tt, ← getLevel bb', .lam nm tt bb bi)
-
 structure LocalThm where
   value : Expr
   paramInfos : Array ParamComputability
@@ -320,25 +324,6 @@ where
       let thm : LocalThm := { value := by exact value, paramInfos := #[.computable] }
       { c with localCompThms := c.localCompThms.insert val.fvarId! thm }
 
-@[inline]
-def isAlwaysZeroQ (lvl : Level) : MaybeLevelDefEq lvl Level.zero :=
-  if lvl.isAlwaysZero then
-    .defEq ⟨⟩
-  else
-    .notDefEq
-
-@[inline]
-def withLetDeclQ [MonadControlT MetaM n] [Monad n]
-    (name : Name) {type : Q(Sort u)} (val : Q($type))
-    (k : (var : Q($type)) → $var =Q $val → n α) : n α :=
-  withLetDecl name type val (fun e => k e ⟨⟩)
-
-@[inline]
-def withHaveDeclQ [MonadControlT MetaM n] [Monad n]
-    (name : Name) {type : Q(Sort u)} (val : Q($type))
-    (k : (var : Q($type)) → n α) : n α :=
-  withLetDecl name type val k (nondep := true)
-
 def getRawForallArity (e : Expr) : Nat :=
   go e 0
 where
@@ -348,6 +333,27 @@ where
     | _ => acc
 
 set_option backward.do.legacy false
+
+def checkIrrel (ty : Expr) : Bool :=
+  match ty with
+  | .sort _ => true
+  | .forallE _ _ b _ => checkIrrel b
+  | .lam _ _ b _ => checkIrrel b
+  | .app f _ => checkIrrel f
+  | _ => false
+
+partial def isTriviallyIrrelevant (e : Expr) : MetaM <| Option (Level × Expr) := do
+  if let .sort u := e then
+    return some ⟨u.succ, q(instIrrelSort.{u})⟩
+  else if let .forallE nm t b bi := id e then
+    withLocalDecl nm bi t fun var => do
+      let some ⟨v, irrel⟩ ← isTriviallyIrrelevant (b.instantiate1 var) | return none
+      let ⟨u, t⟩ ← getLevelQ t
+      have blam : Q($t → Sort v) := .lam nm t b bi
+      let _irrel : Q((x : $t) → Irrel ($blam x)) ← mkLambdaFVars #[var] irrel
+      return some ⟨u.imax v, q(@instIrrelForall $t $blam _)⟩
+  else
+    return none
 
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
@@ -382,7 +388,15 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     return match prim with
     | true | false => q(.proof)
   let .lam nm _ b bi := id f | unreachable!
-  let b ← whnfFast b (← read).zeta
+  if checkIrrel res then
+    return ← withLocalDeclD `c ctx fun var => do
+      let some ⟨_, irrel⟩ ← isTriviallyIrrelevant (res.betaRev #[var]) | unreachable!
+      let _irrel : Q((x : $ctx) → Irrel ($res x)) ← mkLambdaFVars #[var] irrel
+      return match prim with
+      | true | false => q(.irrel)
+  let b ← withLocalDeclD `c ctx fun var => do
+    return (← whnfFast (b.instantiate1 var) (← read).zeta).abstract #[var]
+  trace[debug] "after whnfFast: {b}"
   b.withApp fun fn args => do
   let thm ← match fn with
     | .sort u =>
@@ -414,8 +428,8 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
         have f' : Q((a : $ctx) → $res a) := .lam nm ctx b bi
         have : $f' =Q $f := ⟨⟩
         if let .defEq _ := isAlwaysZeroQ tlvl then
-          let res ← solveDPrimGoal prim q($f)
-          return ← mkLetFVars #[var] res
+          let res ← solveDPrimGoal prim q($f')
+          return ← mkLetFVars #[var] (generalizeNondepLet := false) res
         let valcomp ← solveDPrimGoal prim q($letVal)
         have valcomp : Q($(mkPred prim q($var))) := valcomp
         -- add a computability/primrec proof
@@ -458,9 +472,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
     match param with
     | .always => continue
     | .prim =>
-      let .forallE _ (mkApp3 (.const ``DPrim [u, v]) α β g) _ _ ←
-          inferType val | throwError "invalid lemma"
-      let subgoal ← @solveDPrimGoal true u v α β g
+      let .forallE _ ty _ _ ← inferType val | throwError "invalid lemma"
+      let q(@DPrim.{_u, _v} $_α $_β $g) := ty | throwError "invalid lemma"
+      let subgoal ← solveDPrimGoal true q($g)
       val := val.app subgoal
     | .computable =>
       let subgoal ← solveDPrimGoal false q($argLambda)
@@ -507,19 +521,6 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
 
 end
 
-partial def isTriviallyIrrelevant (e : Expr) : MetaM <| Option (Level × Expr) := do
-  if let .sort u := e then
-    return some ⟨u.succ, q(instIrrelSort.{u})⟩
-  else if let .forallE nm t b bi := id e then
-    withLocalDecl nm bi t fun var => do
-      let some ⟨v, irrel⟩ ← isTriviallyIrrelevant (b.instantiate1 var) | return none
-      let ⟨u, t⟩ ← getLevelQ t
-      have blam : Q($t → Sort v) := .lam nm t b bi
-      let _irrel : Q((x : $t) → Irrel ($blam x)) ← mkLambdaFVars #[var] irrel
-      return some ⟨u.imax v, q(@instIrrelForall $t $blam)⟩
-  else
-    return none
-
 elab "other_dcomp_tac" : tactic => do
   let goal ← getMainGoal
   goal.withContext do
@@ -542,23 +543,26 @@ elab "other_dcomp_tac" : tactic => do
   }
   for decl in (← getLCtx) do
     let type ← whnfR decl.type
-    if let mkApp3 (.const ``DComp [tlvl, blvl]) t b f@(.fvar _) := type then
-      have t : Q(Sort tlvl) := t
-      have b : Q($t → Sort blvl) := b
-      have f : Q((x : $t) → $b x) := f
-      have e : Q(DComp $f) := decl.toExpr
-      context := withBasicLocalThm.newContext false q($e) context
-    else
-      let .forallE nm t b bi := id type | continue
-      context ← withLocalDecl nm bi t fun var => do
-        let some ⟨v, irrel⟩ ← isTriviallyIrrelevant (b.instantiate1 var) |
-          return context
-        let ⟨u, t⟩ ← getLevelQ t
-        have blam : Q($t → Sort v) := .lam nm t b bi
-        let _irrel : Q((x : $t) → Irrel ($blam x)) ← mkLambdaFVars #[var] irrel
-        have f : Q((a : $t) → $blam a) := decl.toExpr
-        have e : Q(DPrim $f) := q(.irrel)
-        return withBasicLocalThm.newContext true q($e) context
+    if let q(@DComp.{tlvl, blvl} $_t $_b $f) := type then
+      if f.isFVar then
+        have e : Q(DComp $f) := decl.toExpr
+        context := withBasicLocalThm.newContext false q($e) context
+        continue
+    if let q(@DPrim.{tlvl, blvl} $_t $_b $f) := type then
+      if f.isFVar then
+        have e : Q(DPrim $f) := decl.toExpr
+        context := withBasicLocalThm.newContext true q($e) context
+        continue
+    let .forallE nm t b bi := id type | continue
+    context ← withLocalDecl nm bi t fun var => do
+      let some ⟨v, irrel⟩ ← isTriviallyIrrelevant (b.instantiate1 var) |
+        return context
+      let ⟨u, t⟩ ← getLevelQ t
+      have blam : Q($t → Sort v) := .lam nm t b bi
+      let _irrel : Q((x : $t) → Irrel ($blam x)) ← mkLambdaFVars #[var] irrel
+      have f : Q((a : $t) → $blam a) := decl.toExpr
+      have e : Q(DPrim $f) := q(.irrel)
+      return withBasicLocalThm.newContext true q($e) context
   let res ← (solveDPrimGoal prim q($f)).run context
   goal.assign res
 

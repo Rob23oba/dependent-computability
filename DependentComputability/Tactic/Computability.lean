@@ -57,25 +57,25 @@ attribute [other_dprim] PSigma.fst.dcomp PSigma.snd.dcomp PSigma.mk.dcomp
   PSigma.fst.dprim PSigma.snd.dprim PSigma.mk.dprim
 
 @[dprim]
-theorem _root_.New.Subtype.val.computable.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
+theorem _root_.New.Subtype.val.primrec.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
     {α : ctx → Sort u} {α_extra : new_type% α}
     {p : (c : ctx) → α c → Prop} {p_extra : new_type% p}
     {self : (c : ctx) → Subtype (p c)} {self_extra : new_type% self}
-    (self_comp : DComputable (new% self)) :
-    DComputable (new% fun c => (self c).val) := by
+    (self_comp : DPrimrec (new% self)) :
+    DPrimrec (new% fun c => (self c).val) := by
   obtain ⟨g, hg, hg'⟩ := self_comp
   use g, hg
   simpa using hg'
 
 @[dprim]
-theorem _root_.New.Subtype.mk.computable.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
+theorem _root_.New.Subtype.mk.primrec.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
     {α : ctx → Sort u} {α_extra : new_type% α}
     {p : (c : ctx) → α c → Prop} {p_extra : new_type% p}
     {val : (c : ctx) → α c} {val_extra : new_type% val}
-    (val_comp : DComputable (new% val))
+    (val_comp : DPrimrec (new% val))
     {property : (c : ctx) → p c (val c)}
     (property_extra : new_type% property) :
-    DComputable (new% fun c => Subtype.mk (val c) (property c)) := by
+    DPrimrec (new% fun c => Subtype.mk (val c) (property c)) := by
   obtain ⟨g, hg, hg'⟩ := val_comp
   use g, hg
   simpa using hg'
@@ -86,32 +86,67 @@ set_option linter.unusedVariables.funArgs false
 
 @[other_dprim]
 lemma Subtype.mk.dprim {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Prop}
-    {f : (c : ctx) → α c} (hf : DComp f) {g : (c : ctx) → β c (f c)} :
-    DComp (fun c => Subtype.mk (f c) (g c)) := .unsafeIntro
+    {f : (c : ctx) → α c} (hf : DPrim f) {g : (c : ctx) → β c (f c)} :
+    DPrim (fun c => Subtype.mk (f c) (g c)) := .unsafeIntro
 
 @[other_dprim]
 lemma Subtype.val.dprim {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Prop}
-    {f : (c : ctx) → Subtype (β c)} (hf : DComp f) :
-    DComp (fun c => (f c).1) := .unsafeIntro
+    {f : (c : ctx) → Subtype (β c)} (hf : DPrim f) :
+    DPrim (fun c => (f c).1) := .unsafeIntro
 
 @[other_dprim]
 lemma Subtype.mk.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Prop}
     {f : (c : ctx) → α c} (hf : DComp f) {g : (c : ctx) → β c (f c)} :
-    DComp (fun c => Subtype.mk (f c) (g c)) := .unsafeIntro
+    DComp (fun c => Subtype.mk (f c) (g c)) :=
+  .app (.app (.curry (.curry (.of_prim <| by other_dcomp_tac))) hf) .irrel
 
 @[other_dprim]
 lemma Subtype.val.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Prop}
     {f : (c : ctx) → Subtype (β c)} (hf : DComp f) :
-    DComp (fun c => (f c).1) := .unsafeIntro
+    DComp (fun c => (f c).1) :=
+  .app (.curry (.of_prim <| by other_dcomp_tac)) hf
+
+lemma DComp.natLit {ctx : Sort u} (n : ℕ) :
+    DComp (fun c : ctx => n) := .unsafeIntro
+lemma DComp.strLit {ctx : Sort u} (s : String) :
+    DComp (fun c : ctx => s) := .unsafeIntro
 
 lemma _root_.New.Subtype.mk.dprim.{u, v} : new_type% @Subtype.mk.dprim.{u, v} :=
-  fun _ _ _ _ _ _ _ _ _ hf _ _ => New.Subtype.mk.computable hf _
+  fun _ _ _ _ _ _ _ _ _ hf _ _ => New.Subtype.mk.primrec hf _
 lemma _root_.New.Subtype.val.dprim.{u, v} : new_type% @Subtype.val.dprim.{u, v} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.Subtype.val.computable hf
-lemma _root_.New.Subtype.mk.dcomp.{u, v} : new_type% @Subtype.mk.dcomp.{u, v} :=
-  fun _ _ _ _ _ _ _ _ _ hf _ _ => New.Subtype.mk.computable hf _
-lemma _root_.New.Subtype.val.dcomp.{u, v} : new_type% @Subtype.val.dcomp.{u, v} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.Subtype.val.computable hf
+  fun _ _ _ _ _ _ _ _ _ hf => New.Subtype.val.primrec hf
+
+lemma _root_.New.DComp.natLit.{u} : new_type% @DComp.natLit.{u} :=
+  fun _ _ _ _ => DComputable.const (β_extra := new% ℕ)
+
+convert_to_new Subtype.mk.dcomp Subtype.val.dcomp
+-- TODO
+/-
+lemma _root_.New.DComp.strLit.{u} : new_type% @DComp.strLit.{u} :=
+  fun _ _ _ _ => DComputable.const (β_extra := new% String)
+-/
+
+@[other_dprim]
+lemma PSigma.rec.dprim.{c, u_1, u, v} {ctx : Sort c}
+    {α : ctx → Sort u} {β : (c : ctx) → α c → Sort v}
+    {motive : (c : ctx) → PSigma (β c) → Sort u_1}
+    {mk : (c : ctx) → (fst : α c) → (snd : β c fst) → motive c ⟨fst, snd⟩}
+    (mk_prim : DPrim fun x : (c : ctx) ×' (fst : α c) ×' β c fst => mk x.1 x.2.1 x.2.2)
+    {t : (c : ctx) → PSigma (β c)} (t_prim : DPrim t) :
+    DPrim fun c => @PSigma.rec (α c) (β c) (motive c) (mk c) (t c) :=
+  mk_prim.comp (PSigma.mk.dprim .id t_prim)
+
+@[other_dprim]
+lemma Subtype.rec.dprim.{c, u_1, u} {ctx : Sort c}
+    {α : ctx → Sort u} {p : (c : ctx) → α c → Prop}
+    {motive : (c : ctx) → Subtype (p c) → Sort u_1}
+    {mk : (c : ctx) → (fst : α c) → (snd : p c fst) → motive c ⟨fst, snd⟩}
+    (mk_prim : DPrim fun x : (c : ctx) ×' (fst : α c) ×' p c fst => mk x.1 x.2.1 x.2.2)
+    {t : (c : ctx) → Subtype (p c)} (t_prim : DPrim t) :
+    DPrim fun c => @Subtype.rec (α c) (p c) (motive c) (mk c) (t c) := by
+  have : DPrim fun c => (⟨c, (t c).1, (t c).2⟩ : (c : ctx) ×' (fst : α c) ×' p c fst) := by
+    other_dcomp_tac
+  exact mk_prim.comp this
 
 end
 
@@ -227,17 +262,30 @@ lemma New.Acc.rec.dcomp.{c, v, u} : new_type% @Acc.rec.dcomp.{c, v, u} :=
   fun _ _ _ _ _ _ _ _ _ _ _ hi _ _ _ ha _ _ => New.Acc.rec.computable hi ha
 
 @[dprim]
-theorem New.PUnit.unit.computable.{u, v} {ctx : Sort u} {ctx_extra : new_type% ctx} :
-    DComputable (new% fun _ : ctx => PUnit.unit.{v}) := by
+theorem New.PUnit.unit.primrec.{u, v} {ctx : Sort u} {ctx_extra : new_type% ctx} :
+    DPrimrec (new% fun _ : ctx => PUnit.unit.{v}) := by
   refine .const' (x_extra := new% PUnit.unit.{v}) ?_
   exact ⟨0, .zero⟩
 
-@[other_dprim] lemma PUnit.unit.dcomp.{u, v} {ctx : Sort u} :
-    DComp (fun _ : ctx => PUnit.unit.{v}) := .unsafeIntro
-lemma New.PUnit.unit.dcomp.{u, v} : new_type% @PUnit.unit.dcomp.{u, v} := @New.PUnit.unit.computable
+@[other_dprim] lemma PUnit.unit.dprim.{u, v} {ctx : Sort u} :
+    DPrim (fun _ : ctx => PUnit.unit.{v}) := .unsafeIntro
+lemma New.PUnit.unit.dprim.{u, v} : new_type% @PUnit.unit.dprim.{u, v} := @New.PUnit.unit.primrec
 
+@[other_dprim] lemma PUnit.unit.dcomp.{u, v} {ctx : Sort u} :
+    DComp (fun _ : ctx => PUnit.unit.{v}) := .of_prim PUnit.unit.dprim
+
+@[other_dprim] lemma PUnit.rec.dprim.{c, u, v} {ctx : Sort c}
+    {motive : ctx → PUnit.{v} → Sort u} {unit : ∀ c, motive c ⟨⟩} (unit_prim : DPrim unit)
+    {t : ctx → PUnit.{v}} :
+    DPrim (fun c => @PUnit.rec.{u, v} (motive c) (unit c) (t c)) := unit_prim
+
+@[other_dprim] lemma PUnit.rec.dcomp.{c, u, v} {ctx : Sort c}
+    {motive : ctx → PUnit.{v} → Sort u} {unit : ∀ c, motive c ⟨⟩} (unit_comp : DComp unit)
+    {t : ctx → PUnit.{v}} :
+    DComp (fun c => @PUnit.rec.{u, v} (motive c) (unit c) (t c)) := unit_comp
+
+@[other_dprim] lemma Unit.unit.dprim {ctx : Sort u} : DPrim (fun _ : ctx => ()) := PUnit.unit.dprim
 @[other_dprim] lemma Unit.unit.dcomp {ctx : Sort u} : DComp (fun _ : ctx => ()) := PUnit.unit.dcomp
-lemma New.Unit.unit.dcomp.{u} : new_type% @Unit.unit.dcomp.{u} := @New.PUnit.unit.computable
 
 example : DComputable (new% fun (x : Nat → Nat) y => x y) := by
   dcomp_tac
@@ -314,34 +362,52 @@ set_option linter.unusedVariables.funArgs false in
 lemma New.Nat.rec.dprim.{u, v} : new_type% @Nat.rec.dprim.{u, v} :=
   fun _ _ _ _ _ _ _ hz _ _ _ hs _ _ _ ht => New.Nat.rec.primrec hz hs ht
 
-set_option linter.unusedVariables.funArgs false in
-@[other_dprim] lemma Nat.rec.dcomp
-    {ctx : Sort u} {motive : ctx → ℕ → Sort v}
-    {zero : (c : ctx) → motive c .zero} (zero_comp : DComp zero)
-    {succ : (c : ctx) → (n : ℕ) → motive c n → motive c (.succ n)} (succ_comp : DComp succ)
-    {t : ctx → ℕ} (t_comp : DComp t) :
-    DComp fun c => @Nat.rec (motive c) (zero c) (succ c) (t c) := by
-  have (c : ctx) : @Nat.rec (motive c) (zero c) (succ c) (t c) =
-      @Nat.rec (fun n => Unit → motive c n) (fun _ => zero c)
-        (fun n ih _ => succ c n (ih ())) (t c) () := by
-    induction t c <;> simp_all
-  rw [funext this]
-  have recComp : DComp (fun x :
-      (c : ctx) ×' (zero : Unit → motive c 0) ×'
-        (succ : (n : ℕ) → (Unit → motive c n) →
-          Unit → motive c (n.succ)) ×' ℕ =>
-      @Nat.rec (fun n => Unit → motive x.1 n) x.2.1 x.2.2.1 x.2.2.2) := by
-    refine .of_prim ?_
-    other_dcomp_tac
-  have mk : DComp (fun c : ctx =>
-      (⟨c, fun _ => zero c, fun n ih _ => succ c n (ih ()), t c⟩ :
-        (c : ctx) ×' (zero : Unit → motive c 0) ×'
-          (succ : (n : ℕ) → (Unit → motive c n) →
-            Unit → motive c (n.succ)) ×' ℕ)) := by
-    other_dcomp_tac
-  exact .comp (.app recComp Unit.unit.dcomp) mk
+set_option linter.unusedVariables false in
+@[other_dprim] lemma Quot.mk.dprim {ctx : Sort c} {α : ctx → Sort u}
+    {r : (c : ctx) → α c → α c → Prop} {t : (c : ctx) → α c} (t_prim : DPrim t) :
+    DPrim fun c => Quot.mk (r c) (t c) := .unsafeIntro
 
-convert_to_new Nat.rec.dcomp
+@[other_dprim] lemma Quot.mk.dcomp {ctx : Sort c} {α : ctx → Sort u}
+    {r : (c : ctx) → α c → α c → Prop} {t : (c : ctx) → α c} (t_comp : DComp t) :
+    DComp fun c => Quot.mk (r c) (t c) :=
+  .app (.curry (.of_prim <| by other_dcomp_tac)) t_comp
+
+set_option linter.unusedVariables false in
+@[other_dprim] lemma Quot.lift.dprim.{c, u, v} {ctx : Sort c} {α : ctx → Sort u}
+    {r : (c : ctx) → α c → α c → Prop} {β : ctx → Sort v}
+    {f : (c : ctx) → α c → β c} (f_prim : DPrim fun x : PSigma α => f x.1 x.2)
+    {h : (c : ctx) → (a b : α c) → r c a b → f c a = f c b}
+    {t : (c : ctx) → Quot (r c)} (t_prim : DPrim t) :
+    DPrim fun c => Quot.lift (f c) (h c) (t c) := .unsafeIntro
+
+@[other_dprim] lemma Quot.lift.dcomp.{c, u, v} {ctx : Sort c} {α : ctx → Sort u}
+    {r : (c : ctx) → α c → α c → Prop} {β : ctx → Sort v}
+    {f : (c : ctx) → α c → β c} (f_comp : DComp f)
+    {h : (c : ctx) → (a b : α c) → r c a b → f c a = f c b}
+    {t : (c : ctx) → Quot (r c)} (t_comp : DComp t) :
+    DComp fun c => Quot.lift (f c) (h c) (t c) := by
+  have (c : ctx) : Quot.lift (f c) (h c) (t c) = Quot.lift (fun a _ => f c a)
+      (fun a b hab => congrArg (fun x _ => x) (h c a b hab)) (t c) () := by
+    rcases t c; rfl
+  rw [funext this]
+  refine .app (.app (.curry (.of_prim ?_)) t_comp) Unit.unit.dcomp
+  other_dcomp_tac
+
+lemma _root_.New.Quot.mk.dprim.{c, u} : new_type% @Quot.mk.dprim.{c, u} := by
+  intro ctx ctx' α α' r r' t t' ⟨⟩ ⟨f, hf, hf'⟩
+  refine ⟨f, hf, ?_⟩
+  intro c c' cn hcn
+  exact ⟨hf' hcn⟩
+
+lemma _root_.New.Quot.lift.dprim.{c, u, v} : new_type% @Quot.lift.dprim.{c, u, v} := by
+  intro ctx ctx' α α' r r' β β' f f' ⟨⟩ ⟨ff, hff, hff'⟩ h h' t t' ⟨⟩ ⟨ft, hft, hft'⟩
+  refine ⟨_, hff.comp (.pair .id hft), ?_⟩
+  intro c c' cn hcn
+  specialize hft' hcn
+  generalize t' c' = t' at *
+  generalize t c = t at *
+  rcases hft' with @⟨t, t', _, ht⟩
+  exact @hff' ⟨c, t⟩ ⟨c', t'⟩ (Nat.pair cn (ft cn)) ⟨hcn, ht⟩
 
 open Lean Meta Qq
 def insertContextType (e : Expr) (ctx : Expr) (max : Nat) (insts : Array Expr := #[]) : Expr :=
@@ -608,42 +674,6 @@ partial def makeTheoremBuilder {α : Q(Sort u)} {α_extra : Q(new_type% $α)}
   else
     return q(.prependIrrelevant $res)
 
-def makeCtorEncodingProof (ctor : ConstructorVal) (isStruct : Bool) (levels : List Level) :
-    MetaM Expr := do
-  let shortName := ctor.name.replacePrefix ctor.induct .anonymous
-  unless isStruct do
-    return .const (mkNewInductEncodingName ctor.induct ++ shortName) levels
-  forallTelescope ctor.type fun vars _body => do
-  withNewVars vars convertTypeSimpleNew fun newVars _extraMap => do
-  withImplicitBinderInfos vars do
-    let params := vars.take ctor.numParams
-    let newParams := newVars.take ctor.numParams
-    let allParams := params.interleave newParams
-    let rec go (i : Nat) (allVars : Array Expr) (encs : Array Expr) : MetaM Expr := do
-      if h : i < vars.size then
-        let var := vars[i]
-        let newVar := newVars[i]!
-        let allVars := allVars.push var |>.push newVar
-        if ← isProof var then
-          return ← go (i + 1) allVars encs
-        let decl ← newVar.fvarId!.getDecl
-        let name := decl.userName
-        let mkExtraApp ty _ := decl.type | unreachable!
-        withLocalDeclD (name.appendAfter "_n") q(ℕ) fun n => do
-        let encType := mkApp3 (.proj ``SortExtra 1 ty) var newVar n
-        withLocalDeclD (name.appendAfter "_enc") encType fun enc => do
-          go (i + 1) (allVars.push n |>.push enc) (encs.push n |>.push enc)
-      else
-        let ctorApp := mkAppN (.const ctor.name levels) vars
-        let newCtorName := mkNewInductName ctor.induct ++ shortName
-        let newCtorApp := mkAppN (.const newCtorName levels) allParams
-        let newCtorApp := mkAppN (newCtorApp.app ctorApp) (newVars.drop ctor.numParams)
-        let encodingCtorName := mkNewInductEncodingName ctor.induct ++ shortName
-        let proof := mkAppN (.const encodingCtorName levels) allParams
-        let proof := mkApp2 proof ctorApp newCtorApp
-        mkLambdaFVars allVars (mkAppN proof encs)
-    go ctor.numParams allParams #[]
-
 open DPrimrec.Tactic in
 def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
   recConvertToNew ctorName
@@ -666,7 +696,9 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
   -- Build the theorem builder
   let builder ← makeTheoremBuilder q(new% fun _ : Unit => $val) q($f) q($hf)
     (hadRelevant := false) ctor.numParams ctxLvl
-  let input : Q(($builder).In () (new% ()) 0) ← makeCtorEncodingProof ctor isStruct levels
+  let shortName := ctor.name.replacePrefix ctor.induct .anonymous
+  let input : Q(($builder).In () (new% ()) 0) :=
+    .const (mkNewInductEncodingName ctor.induct ++ shortName) levels
   withLocalDeclQ `ctx .implicit q(Sort ctxLvl) fun ctx =>
   withLocalDeclQ `ctx_extra .implicit q(new_type% $ctx) fun ctx' =>
     let e := insertContextType ctorType ctx ctorType.getForallArity
@@ -723,6 +755,13 @@ def proveConstructorComputable (ctorName : Name) : MetaM Unit := do
             type := dummyType
             value := dummyValue
           }
+          let thmInfo := {
+            prim
+            declName := ctorName
+            thmName := dummyName
+            paramInfos := comps
+          }
+          modifyEnv (Other.otherDPrimExt.addEntry · thmInfo)
           let dummyThm := .const dummyName (ctxLvl :: levels)
           let realType ← convertTypeSimpleNew dummyThm dummyType baseMap
           let realValue ← mkLambdaFVars allNewVars proof

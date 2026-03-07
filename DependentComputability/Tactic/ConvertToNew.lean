@@ -175,36 +175,38 @@ def mkNewStructEncodingInductiveType (info : InductiveVal) : MetaM InductiveType
       mkForallFVars (vars.interleave newVars) body
   let [ctor] := info.ctors | throwError "internal error"
   let newCtorName := newInductName ++ ctor.replacePrefix ind .anonymous
-  let newCtorVal ← getConstInfoCtor newCtorName
-  let newCtor ← forallTelescope newCtorVal.type fun vars body => do
-    let extra := mkAppN (.const newInductName levels) (vars.take newCtorVal.numParams)
-    withLocalDecl `t .implicit extra fun textra => do
-    let fields := vars.drop newCtorVal.numParams
-    let substs : Array Expr := Array.ofFn fun i : Fin newCtorVal.numFields =>
-      .proj newInductName i textra
+  let ctorVal ← getConstInfoCtor ctor
+  let newCtor ← forallTelescope ctorVal.type fun vars _ => do
+    withNewVars vars convertTypeSimpleNew fun newVars extraMap => do
+    let nparams := ctorVal.numParams
+    let params := vars.take nparams
+    let newParams := newVars.take nparams
+    let allParams := params.interleave newParams
     let rec go (i : Nat) (nats : Array Q(Nat)) (allVars : Array Expr) : MetaM Constructor := do
       if h : i < vars.size then
-        let newVar := vars[i]
+        let var := vars[i]
+        let newVar := newVars[i]!
+        let allVars := allVars.push var |>.push newVar
         if ← isProof newVar then
           return ← go (i + 1) nats allVars
         let nm ← newVar.fvarId!.getUserName
         withLocalDecl (nm.appendAfter "_n") .implicit Nat.mkType fun natVar => do
-          let projIdx := i - newCtorVal.numParams
           let newType ← inferType newVar
-          let newType := newType.replaceFVars fields substs
-          let encType ← transformNewTypeToEncoding newType
-            (.proj newInductName projIdx textra) natVar
+          let encType ← transformNewTypeToEncoding newType newVar natVar
           withLocalDeclD (nm.appendAfter "_enc") encType fun encVar =>
             go (i + 1) (nats.push natVar) (allVars.push natVar |>.push encVar)
       else
-        body.withApp fun fn args => do
-        assert! fn.isConst
+        let newFields := newVars.drop nparams
+        let struct := mkAppN (.const ctor levels) vars
+        let newStruct := mkAppN (.app (mkAppN (.const newCtorName levels) allParams) struct)
+          newFields
         let encoding ← if nats.isEmpty then
             pure (mkRawNatLit 0)
           else
             let first := nats[0]!
             pure <| nats.foldl (mkApp2 (mkConst ``Nat.pair)) first (start := 1)
-        let ctorType := mkApp2 (mkAppN (.const newEncodingName levels) args) textra encoding
+        let ctorType := mkApp3 (mkAppN (.const newEncodingName levels) allParams)
+          struct newStruct encoding
         let ctorType ← mkForallFVars allVars ctorType
         let ctorName := newEncodingName ++ ctor.replacePrefix ind .anonymous
         return {
@@ -212,8 +214,7 @@ def mkNewStructEncodingInductiveType (info : InductiveVal) : MetaM InductiveType
           type := ctorType
         }
     termination_by vars.size - i
-    let nparams := newCtorVal.numParams
-    go nparams #[] (vars.take nparams |>.push textra)
+    go nparams #[] allParams
   return {
     name := newEncodingName
     type := indType
@@ -438,7 +439,7 @@ def convertStructureType (info : InductiveVal) (isIrrel : Bool) : MetaM Unit := 
   mkCasesOn newName
   unless isIrrel do
     let ty ← mkNewStructEncodingInductiveType info
-    addDecl <| .inductDecl info.levelParams (info.numParams * 2 + 2) [ty] info.isUnsafe
+    addDecl <| .inductDecl info.levelParams (info.numParams * 2) [ty] info.isUnsafe
     mkCasesOn (mkNewInductEncodingName info.name)
   addNewTypeDecl info isIrrel
   let const := .const ctor.name lparams'
@@ -496,6 +497,17 @@ def toNewInductiveType (info : InductiveVal) : MetaM InductiveType := do
     type := indType
     ctors := ctors.toList
   }
+
+def transferValue (type : Expr) (value : Expr) : MetaM (Option Expr) := do
+  forallTelescope type fun vars body => do
+  withNewVars vars convertTypeSimpleNew fun newVars extraMap => do
+    let bodyUniv ← getLevel body
+    let newBody ← conversionStepNew.visit body extraMap
+    let instType := mkApp2 (.const ``InhabitedExtra [bodyUniv]) body newBody
+    let some inst ← synthInstance? instType | return none
+    let value := mkAppN value vars
+    let newValue := mkApp4 (.const ``InhabitedExtra.default [bodyUniv]) body newBody inst value
+    mkLambdaFVars (vars.interleave newVars) newValue
 
 mutual
 
@@ -581,10 +593,9 @@ partial def recConvertToNew (nm : Name) : CoreM Unit := do
         let const := .const val.name (val.levelParams.map Level.param)
         let newType' : Expr := mkExtraApp newType const
         -- attempt transfer
-        let instType := mkApp2 (.const ``InhabitedExtra [.zero]) type newType
         let mut newValue := default
-        if let some inst ← synthInstance? instType then
-          newValue := mkApp4 (.const ``InhabitedExtra.default [.zero]) type newType inst const
+        if let some val ← transferValue type const then
+          newValue := val
         else
           let value := val.value
           let consts := value.getUsedConstantsAsSet
@@ -622,6 +633,7 @@ partial def recConvertToNew (nm : Name) : CoreM Unit := do
           throwError "Failed to translate opaque {.ofConstName nm}\n{ex.toMessageData}"
     | .inductInfo val => (convertInductToNew val).run'
     | .ctorInfo val => recConvertToNew val.induct
+    | .recInfo val => recConvertToNew val.all[0]!
     | _ => throwError "unhandled const info {.ofConstName nm}"
   catch ex =>
     let msg := ex.toMessageData ++ m!"\nin {.ofConstName nm}"

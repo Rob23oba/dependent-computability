@@ -25,6 +25,9 @@ protected def PUnit.{u} : new_type% @PUnit.{u} :=
 protected def PUnit.unit.{u} : new_type% @PUnit.unit.{u} :=
   @_root_.PUnit.unit.{u}
 
+protected def PUnit.rec.{u_1, u} : new_type% @PUnit.rec.{u_1, u} :=
+  fun _ _ _ intro _ _ => intro
+
 protected theorem propext : new_type% @propext := by
   intro p p_extra q q_extra h h_extra
   dsimp only
@@ -244,6 +247,12 @@ instance {α : Type u} {α_extra : new_type% α} [SubsingletonExtra α_extra] :
 instance {α : Type u} {α_extra : new_type% α} [InhabitedExtra α_extra] :
     InhabitedExtra (new% List α) where
   default t := t.rec .nil fun head _ ih => .cons (InhabitedExtra.default head) ih
+
+instance {α : Type u} {α_extra : new_type% α} [FullyRepresentable α_extra] :
+    FullyRepresentable (new% List α) where
+  isRepresentable t := t.rec ⟨_, .nil⟩ fun {head} _ {_} _ ⟨_, ih⟩ =>
+    have ⟨_, h⟩ := FullyRepresentable.isRepresentable (new% head)
+    ⟨_, .cons h ih⟩
 
 instance {α : Type u} {α_extra : new_type% α} [SubsingletonExtra α_extra] :
     SubsingletonExtra (new% Array α) where
