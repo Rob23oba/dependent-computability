@@ -194,7 +194,7 @@ partial def conversionStepNew (e : Expr) : MetaM Expr := do
         if ← isStructureLikeWithLargeElim t then
           return .proj (mkNewInductName t) i (← visit e extraMap)
         else
-          conversionStepNew (← projToRec t i e)
+          visit (← projToRec t i e) extraMap
       | .app f a => return mkApp2 (← visit f extraMap) a (← visit a extraMap)
       | .letE nm t v b nd =>
         withLetDecl nm t v (nondep := false) fun baseVar => do
@@ -253,15 +253,20 @@ elab tk:"new% " t:term : term => do
     if let mkExtraApp ty val := expTy then
       eTy ← Meta.inferType val
   let expr ← elabTerm t eTy
+  if let some expTy := expectedType? then
+    let expTy ← instantiateMVars expTy
+    if let mkExtraApp ty val := expTy then
+      discard <| Meta.isDefEq val expr
   synthesizeSyntheticMVarsNoPostponing
   let expr ← instantiateMVars expr
+  if expr.hasExprMVar then
+    discard <| logUnassignedUsingErrorInfos (← Meta.getMVars expr)
+    throwAbortTerm
   let extraMap ← populateBaseMap
   if expr.hasAnyFVar (not ∘ extraMap.contains) then
     let some a := expr.find? (fun | .fvar f => !extraMap.contains f | _ => false) |
       throwErrorAt tk "expression has free variables"
     throwErrorAt tk "Invalid unresolved free variable {a} in{indentExpr expr}"
-  if expr.hasMVar then
-    throwErrorAt tk "expression has metavariables:{indentExpr expr}"
   for const in expr.getUsedConstantsAsSet do
     unless (← getEnv).contains (mkNewName const) do
       let converter ← declConverterRef.get
@@ -348,18 +353,6 @@ inductive DPrimrec {α : Sort u} {α_extra : new_type% α}
 class FullyRepresentable {α : Sort u} (α_extra : new_type% α) extends InhabitedExtra α_extra where
   isRepresentable : ∀ {x : α} (x : α_extra.1 x), IsRepresentable x
 
-class CompatibleEncodingRelation {α : Type u} (α_extra : new_type% α)
-    [Encodable α] extends FullyRepresentable α_extra where
-  encode : ℕ → ℕ := id
-  decode : ℕ → ℕ := id
-  decode_encode (n : ℕ) : decode (encode n) = n := by intro; rfl
-  encode_primrec : Nat.Primrec encode := by exact .id
-  decode_primrec : Nat.Primrec decode := by exact .id
-  encode_eq {x : α} {x_extra : α_extra.1 x} {n : ℕ}
-      (hx : α_extra.2 x_extra n) : encode n = Encodable.encode x
-
-attribute [simp] CompatibleEncodingRelation.decode_encode
-
 theorem encoding_pi_def {α : Sort u} {α_extra : new_type% α}
     {β : α → Sort v} {β_extra : new_type% β}
     (h : ¬ IsProp.{imax u v})
@@ -414,152 +407,6 @@ instance instIrrelevantForall {α : Sort u} (α_extra : new_type% α) {β : α �
     rw [encoding_pi_def hprop]
     intros
     simp [ofNatCode_eq, ofNatCode, eval, pure, PFun.pure, Irrelevant.encoding]
-
-structure Encoding {α : Sort u} (α_extra : new_type% α) where
-  repr : ℕ
-
-open CompatibleEncodingRelation in
-instance {α : Type u} {α_extra : new_type% α} [Encodable α]
-    [CompatibleEncodingRelation α_extra] : Primcodable (Encoding α_extra) where
-  encode x := encode α_extra x.repr
-  decode n := some ⟨decode α_extra n⟩
-  encodek := by simp
-  prim := .comp .succ (.comp encode_primrec decode_primrec)
-
-theorem Encoding.encode_eq {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra]
-    {x : α} {x_extra : new_type% x} {n : ℕ} (h : α_extra.2 x_extra n) :
-    Encodable.encode (⟨n⟩ : Encoding α_extra) = Encodable.encode x :=
-  CompatibleEncodingRelation.encode_eq h
-
-theorem CompatibleEncodingRelation.encoding_unique
-    {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra]
-    {x : α} {x_extra : new_type% x}
-    {y : α} {y_extra : new_type% y}
-    {n : ℕ} (hx : α_extra.2 x_extra n) (hy : α_extra.2 y_extra n) : x = y := by
-  apply Encodable.encode_injective
-  rw [← Encoding.encode_eq hx, ← Encoding.encode_eq hy]
-
-theorem Option.rec_eq_elim {α : Type u} {β : Type v} (x : Option α) (n : β) (s : α → β) :
-    Option.rec n s x = Option.elim x n s := by
-  cases x <;> rfl
-
-theorem Encoding.primrec_mk {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra] :
-    Primrec (Encoding.mk : ℕ → Encoding α_extra) :=
-  Nat.Primrec.comp .succ CompatibleEncodingRelation.encode_primrec
-
-theorem Encoding.primrec_repr {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra] :
-    Primrec (Encoding.repr : Encoding α_extra → ℕ) :=
-  Nat.Primrec.comp .succ CompatibleEncodingRelation.decode_primrec
-
-def Encoding.of {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra]
-    (x : α) : Encoding α_extra := ⟨CompatibleEncodingRelation.decode α_extra (Encodable.encode x)⟩
-
-theorem Encoding.encode_of {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra]
-    (x : α) : Encodable.encode (Encoding.of (α_extra := α_extra) x) = Encodable.encode x := by
-  obtain ⟨n, hn⟩ := FullyRepresentable.isRepresentable (InhabitedExtra.default x : α_extra.1 x)
-  simp [of, ← Encoding.encode_eq hn, Encodable.encode]
-
-theorem Encoding.encoding_of {α : Type u} {α_extra : new_type% α}
-    [Encodable α] [CompatibleEncodingRelation α_extra]
-    {x : α} (x_extra : new_type% x) :
-    α_extra.2 x_extra (Encoding.of (α_extra := α_extra) x).repr := by
-  obtain ⟨n, hn⟩ := FullyRepresentable.isRepresentable x_extra
-  simp [of, ← Encoding.encode_eq hn, Encodable.encode, hn]
-
-open CompatibleEncodingRelation in
-theorem Encoding.primrec_of {α : Type u} {α_extra : new_type% α}
-    [Primcodable α] [CompatibleEncodingRelation α_extra] :
-    Primrec (Encoding.of : α → Encoding α_extra) := by
-  unfold of
-  exact .comp primrec_mk (.comp (Primrec.nat_iff.mpr decode_primrec) .encode)
-
-theorem dprimrec_iff_primrec {α : Type u} {α_extra : new_type% α}
-    {β : Type v} {β_extra : new_type% β} [Primcodable α] [Primcodable β]
-    [CompatibleEncodingRelation α_extra] [CompatibleEncodingRelation β_extra]
-    {f : α → β} (f_extra : new_type% f) :
-    DPrimrec f_extra ↔ Primrec f := by
-  constructor
-  · rintro ⟨g, hgprim, hg'⟩
-    rw [Primrec]
-    rw [← Primrec.nat_iff] at hgprim ⊢
-    let g' (a : Encoding α_extra) : Encoding β_extra := ⟨g a.repr⟩
-    have commute (a : α) : g' (Encoding.of a) = Encoding.of (f a) := by
-      have := hg' (Encoding.encoding_of (InhabitedExtra.default a : α_extra.1 a))
-      simp [Encoding.of, g', ← Encoding.encode_eq this, Encodable.encode]
-    have hg'prim : Primrec g' := .comp Encoding.primrec_mk (.comp hgprim Encoding.primrec_repr)
-    let fn (n : ℕ) : ℕ :=
-      (Encodable.decode n : Option α).casesOn 0
-        (fun a => Encodable.encode (g' (Encoding.of a)) + 1)
-    have : Primrec fn :=
-      .option_casesOn .decode (.const 0)
-        (Primrec.succ.comp (.comp .encode (.comp hg'prim (.comp Encoding.primrec_of .snd))))
-    refine this.of_eq ?_
-    intro n
-    simp only [fn]
-    rcases h : (Encodable.decode n : Option α) with _ | a
-    · simp
-    · have := Encoding.encode_of (α_extra := β_extra) (f a)
-      simp [← this, commute]
-  · intro hf
-    let fn (n : ℕ) : ℕ :=
-      (Encodable.decode (Encodable.encode (⟨n⟩ : Encoding α_extra)) : Option α).casesOn
-        0 (fun a => (Encoding.of (α_extra := β_extra) (f a)).repr)
-    refine ⟨fn, ?_, ?_⟩
-    · rw [← Primrec.nat_iff]
-      exact .option_casesOn (.comp .decode (.comp .encode Encoding.primrec_mk)) (.const 0) <|
-        Encoding.primrec_repr.comp (Encoding.primrec_of.comp (hf.comp .snd))
-    · intro a a n han
-      simp [fn, Encoding.encode_eq han, Encoding.encoding_of]
-
-theorem dcomputable_iff_computable {α : Type u} {α_extra : new_type% α}
-    {β : Type v} {β_extra : new_type% β} [Primcodable α] [Primcodable β]
-    [CompatibleEncodingRelation α_extra] [CompatibleEncodingRelation β_extra]
-    {f : α → β} (f_extra : new_type% f) :
-    DComputable f_extra ↔ Computable f := by
-  constructor
-  · rintro ⟨g, hgprim, hg'⟩
-    rw [Computable, Partrec]
-    rw [← Partrec.nat_iff] at hgprim ⊢
-    let g' (a : Encoding α_extra) : Part (Encoding β_extra) := (g a.repr).map Encoding.mk
-    have commute (a : α) : g' (Encoding.of a) = Part.some (Encoding.of (f a)) := by
-      obtain ⟨y, hy, this⟩ := hg' (Encoding.encoding_of (InhabitedExtra.default a : α_extra.1 a))
-      simp only [Encoding.of] at hy
-      simp [Encoding.of, g', ← Encoding.encode_eq this, Part.eq_some_iff.mpr hy, Encodable.encode]
-    have hg'part : Partrec g' :=
-      .map (.comp hgprim Encoding.primrec_repr.to_comp) ((Encoding.primrec_mk.comp .snd).to_comp)
-    let fn (n : ℕ) : Part ℕ :=
-      (Part.ofOption (Encodable.decode n)).bind
-        (fun a => (g' (Encoding.of a)).map Encodable.encode)
-    have : Partrec fn :=
-      .bind Computable.decode.ofOption
-        (Partrec.map (.comp hg'part (.comp Encoding.primrec_of.to_comp .snd))
-          (Primrec.encode.comp .snd).to_comp)
-    refine this.of_eq ?_
-    intro n
-    simp only [fn]
-    rcases h : (Encodable.decode n : Option α) with _ | a
-    · simp
-    · have := Encoding.encode_of (α_extra := β_extra) (f a)
-      simp [← this, commute]
-  · intro hf
-    let fn (n : ℕ) : ℕ :=
-      (Encodable.decode (Encodable.encode (⟨n⟩ : Encoding α_extra)) : Option α).casesOn
-        0 (fun a => (Encoding.of (α_extra := β_extra) (f a)).repr)
-    refine ⟨fn, ?_, ?_⟩
-    · rw [← Partrec.nat_iff]
-      change Computable fn
-      unfold fn
-      exact .option_casesOn (.comp .decode (.comp .encode Encoding.primrec_mk.to_comp))
-        (.const 0) (Encoding.primrec_repr.to_comp.comp (Encoding.primrec_of.to_comp.comp
-          (hf.comp .snd)))
-    · intro a a n han
-      simp [fn, Encoding.encode_eq han, Encoding.encoding_of]
 
 protected theorem DPrimrec.id {α : Sort u} {α_extra : new_type% α} :
     DPrimrec (fun ⦃a : α⦄ (a : α_extra.1 a) => a) := by

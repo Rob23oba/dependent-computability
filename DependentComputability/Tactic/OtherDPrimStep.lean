@@ -521,6 +521,8 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
 
 end
 
+initialize recAutoDCompDepsRef : IO.Ref (Expr → CoreM Unit) ← IO.mkRef (fun _ => pure ())
+
 elab "other_dcomp_tac" : tactic => do
   let goal ← getMainGoal
   goal.withContext do
@@ -534,6 +536,7 @@ elab "other_dcomp_tac" : tactic => do
   have ctx : Q(Sort clvl) := ctx
   have res : Q($ctx → Sort rlvl) := res
   have f : Q((c : $ctx) → $res c) := f
+  have f := if f.isLambda then f else q(fun c : $ctx => $f c)
   let ctxUniv := mkFreshLevelName (← getLevelNames)
   let mut context := {
     contextUniv := ctxUniv
@@ -563,6 +566,7 @@ elab "other_dcomp_tac" : tactic => do
       have f : Q((a : $t) → $blam a) := decl.toExpr
       have e : Q(DPrim $f) := q(.irrel)
       return withBasicLocalThm.newContext true q($e) context
+  (← recAutoDCompDepsRef.get) f
   let res ← (solveDPrimGoal prim q($f)).run context
   goal.assign res
 

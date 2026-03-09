@@ -106,18 +106,22 @@ lemma Subtype.val.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) →
     DComp (fun c => (f c).1) :=
   .app (.curry (.of_prim <| by other_dcomp_tac)) hf
 
+lemma DPrim.natLit {ctx : Sort u} (n : ℕ) :
+    DPrim (fun c : ctx => n) := .unsafeIntro
+lemma DPrim.strLit {ctx : Sort u} (s : String) :
+    DPrim (fun c : ctx => s) := .unsafeIntro
 lemma DComp.natLit {ctx : Sort u} (n : ℕ) :
-    DComp (fun c : ctx => n) := .unsafeIntro
+    DComp (fun c : ctx => n) := .of_prim (.natLit n)
 lemma DComp.strLit {ctx : Sort u} (s : String) :
-    DComp (fun c : ctx => s) := .unsafeIntro
+    DComp (fun c : ctx => s) := .of_prim (.strLit s)
 
 lemma _root_.New.Subtype.mk.dprim.{u, v} : new_type% @Subtype.mk.dprim.{u, v} :=
   fun _ _ _ _ _ _ _ _ _ hf _ _ => New.Subtype.mk.primrec hf _
 lemma _root_.New.Subtype.val.dprim.{u, v} : new_type% @Subtype.val.dprim.{u, v} :=
   fun _ _ _ _ _ _ _ _ _ hf => New.Subtype.val.primrec hf
 
-lemma _root_.New.DComp.natLit.{u} : new_type% @DComp.natLit.{u} :=
-  fun _ _ _ _ => DComputable.const (β_extra := new% ℕ)
+lemma _root_.New.DPrim.natLit.{u} : new_type% @DPrim.natLit.{u} :=
+  fun _ _ _ _ => DPrimrec.const (β_extra := new% ℕ) _
 
 convert_to_new Subtype.mk.dcomp Subtype.val.dcomp
 -- TODO
@@ -297,27 +301,30 @@ example : DComputable (new% fun (x : Nat → (_ : Nat) ×' Nat) y => x (x y).2) 
   dcomp_tac
 
 @[dprim]
-theorem _root_.New.Nat.zero.computable {ctx : Sort u} {ctx_extra : new_type% ctx} :
-    DComputable (new% fun _ : ctx => Nat.zero) := .const' (x_extra := new% Nat.zero) ⟨0, rfl⟩
+theorem _root_.New.Nat.zero.primrec {ctx : Sort u} {ctx_extra : new_type% ctx} :
+    DPrimrec (new% fun _ : ctx => Nat.zero) := .const' (x_extra := new% Nat.zero) ⟨0, rfl⟩
 
-@[other_dprim] lemma Nat.zero.dcomp {ctx : Sort u} : DComp (fun _ : ctx => Nat.zero) := .unsafeIntro
-lemma New.Nat.zero.dcomp : new_type% @Nat.zero.dcomp.{u} := @New.Nat.zero.computable
+@[other_dprim] lemma Nat.zero.dprim {ctx : Sort u} : DPrim (fun _ : ctx => Nat.zero) := .unsafeIntro
+@[other_dprim] lemma Nat.zero.dcomp {ctx : Sort u} : DComp (fun _ : ctx => Nat.zero) :=
+  .of_prim Nat.zero.dprim
+lemma New.Nat.zero.dprim : new_type% @Nat.zero.dprim.{u} := @New.Nat.zero.primrec
 
 @[dprim]
-theorem _root_.New.Nat.succ.computable {ctx : Sort u} {ctx_extra : new_type% ctx}
+theorem _root_.New.Nat.succ.primrec {ctx : Sort u} {ctx_extra : new_type% ctx}
     {f : ctx → ℕ} {f_extra : new_type% f}
-    (f_comp : DComputable (new% f)) :
-    DComputable (new% fun c => Nat.succ (f c)) := by
+    (f_comp : DPrimrec (new% f)) :
+    DPrimrec (new% fun c => Nat.succ (f c)) := by
   refine .comp ?_ (f_extra := new% Nat.succ) f_comp
   refine ⟨Nat.succ, .succ, ?_⟩
-  intro a _ _ rfl
-  exact ⟨a + 1, by simp, by rfl⟩
+  intro a _ _ rfl; rfl
 
 set_option linter.unusedVariables.funArgs false in
+@[other_dprim] lemma Nat.succ.dprim {ctx : Sort u} {f : ctx → ℕ} (f_comp : DPrim f) :
+    DPrim (fun c => Nat.succ (f c)) := .unsafeIntro
 @[other_dprim] lemma Nat.succ.dcomp {ctx : Sort u} {f : ctx → ℕ} (f_comp : DComp f) :
-    DComp (fun c => Nat.succ (f c)) := .unsafeIntro
-lemma New.Nat.succ.dcomp : new_type% @Nat.succ.dcomp.{u} :=
-  fun _ _ _ _ _ hf => New.Nat.succ.computable hf
+    DComp (fun c => Nat.succ (f c)) := .app (.curry (.of_prim <| by other_dcomp_tac)) f_comp
+lemma New.Nat.succ.dprim : new_type% @Nat.succ.dprim.{u} :=
+  fun _ _ _ _ _ hf => New.Nat.succ.primrec hf
 
 @[dprim]
 theorem _root_.New.Nat.rec.primrec {ctx : Sort u} {ctx_extra : new_type% ctx}
@@ -493,19 +500,57 @@ def autoDComp (name : Name) (arity : Option Nat := none) : MetaM Unit := do
         modifyEnv (Other.otherDPrimExt.addEntry · entry)
     populateContext context 0 #[ctx] #[]
 
-set_option linter.unusedVariables false in
-lemma PProd.dprim_toPSigma {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PProd (α c) (β c)} (self_comp : DPrim self) :
-    DPrim (fun c => PSigma.mk (β := fun _ => β c) (self c).1 (self c).2) := .unsafeIntro
+partial def mkUncurriedFunctionApp (fn : Expr) (n : Nat) : Expr := Id.run do
+  let mut fn := fn
+  let mut arg : Expr := .bvar 0
+  for _ in *...(n - 1) do
+    fn := fn.app (.proj ``PSigma 0 arg)
+    arg := arg.proj ``PSigma 1
+  return fn.app arg
 
-set_option linter.unusedVariables false in
-lemma PProd.dprim_ofPSigma {ctx : Sort u} {α : ctx → Sort v} {β : ctx → Sort w}
-    {self : (c : ctx) → PSigma (fun _ : α c => β c)} (self_comp : DPrim self) :
-    DPrim (fun c => PProd.mk (self c).1 (self c).2) := .unsafeIntro
+partial def mkUncurriedFunctionType (ty : Expr) : MetaM <|
+    (u v : Level) × (α : Q(Sort u)) × Q($α → Sort v) := do
+  if let .forallE nm t e@(.forallE ..) bi := ty then
+    let u ← getLevel t
+    have t : Q(Sort u) := t
+    withLocalDeclQ nm bi q($t) fun var => do
+      let e' := e.instantiate1 var
+      let ⟨v, w, α, β⟩ ← mkUncurriedFunctionType e'
+      let α : Q($t → Sort v) ← mkLambdaFVars #[var] α
+      let β : Q((x : $t) → $α x → Sort w) ← mkLambdaFVars #[var] β
+      let .lam _ _ (.lam _ _ b _) _ := β | unreachable!
+      have resUniv : Level := .normalize <| .max (.max 1 u) v
+      have : resUniv =QL max (max 1 u v) := ⟨⟩
+      let psigma : Q(Sort resUniv) := q(@PSigma.{u, v} $t $α)
+      have bb := b.instantiateRev #[.proj ``PSigma 0 (.bvar 0), .proj ``PSigma 1 (.bvar 0)]
+      let newβ : Q($psigma → Sort w) := .lam `x psigma bb .default
+      return ⟨resUniv, w, q($psigma), q($newβ)⟩
+  else if let .forallE nm t b bi := ty then
+    let u ← getLevel t
+    have t : Q(Sort u) := t
+    withLocalDeclQ nm bi q($t) fun var => do
+      let b' := b.instantiate1 var
+      let v ← getLevel b'
+      return ⟨u, v, t, .lam nm t b bi⟩
+  else
+    throwError "Invalid input to mkUncurriedFunctionType, expected forall:{indentExpr ty}"
 
-set_option linter.unusedVariables false in
-lemma Nat.pair.dprim {ctx : Sort u} {a : ctx → ℕ} (ha : DPrim a) {b : ctx → ℕ} (hb : DPrim b) :
-    DPrim fun c => Nat.pair (a c) (b c) := .unsafeIntro
+def getNumForalls (e : Expr) : Nat :=
+  go e 0
+where
+  go (e : Expr) (n : Nat) : Nat :=
+    match e with
+    | .forallE _ _ b _ => go b (n + 1)
+    | _ => n
+
+def constructDPrim (e : Expr) : MetaM Expr := do
+  let ty ← inferType e
+  let ⟨u, v, α, β⟩ ← mkUncurriedFunctionType ty
+  let n := getNumForalls ty
+  have fn := mkUncurriedFunctionApp e n
+  have fn : Q((a : $α) → $β a) :=
+    if n = 1 then e else .lam `x α fn .default
+  return q(DPrim $fn)
 
 structure TheoremBuilder.{c} {prectx : Sort u} (prectx_extra : new_type% prectx) where
   In (pre : prectx) (pre_extra : new_type% pre) (n : ℕ) : Prop

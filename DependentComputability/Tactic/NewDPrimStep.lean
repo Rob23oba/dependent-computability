@@ -419,7 +419,7 @@ end
 partial def isTriviallyIrrelevant (e : Expr) : Option Expr := do
   if let .const ``New.Sort [u] := e then
     return q(instIrrelevantSort.{u})
-  else if let q(@New.Forall.{u, v} $α $α_extra $β $β_extra) := e then
+  else if let q(@New.Forall.{u, v} $α $α_extra $_β $β_extra) := e then
     let .lam nm t (.lam nm' t' b' bi') bi := id β_extra | none
     let _inst : Q(∀ ⦃a : $α⦄ (a_extra : new_type% a), Irrelevant ($β_extra a_extra)) ←
       (isTriviallyIrrelevant b').map fun x =>

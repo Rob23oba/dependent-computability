@@ -48,6 +48,10 @@ def elabLetNewCore (cfg : TSyntax ``letConfig) (decl : TSyntax ``letDecl)
       let letTerm ← `(let $cfg:letConfig $decl:letDecl; ?$mvarIdent)
       elabLetDeclCore letTerm goalType initConfig
     let res ← instantiateMVars res
+    for const in res.getUsedConstantsAsSet do
+      unless (← getEnv).contains (mkNewName const) do
+        let converter ← declConverterRef.get
+        converter const
     let (result, newGoal) ← (letNewHelper goalType res (← populateBaseMap)).run
     goal.assign result
     replaceMainGoal [newGoal]

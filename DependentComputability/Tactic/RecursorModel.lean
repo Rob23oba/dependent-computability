@@ -348,58 +348,6 @@ set_option backward.do.legacy false
 
 open Lean Meta Qq
 
-partial def mkUncurriedFunctionApp (fn : Expr) (n : Nat) : Expr := Id.run do
-  let mut fn := fn
-  let mut arg : Expr := .bvar 0
-  for _ in *...(n - 1) do
-    fn := fn.app (.proj ``PSigma 0 arg)
-    arg := arg.proj ``PSigma 1
-  return fn.app arg
-
-partial def mkUncurriedFunctionType (ty : Expr) : MetaM <|
-    (u v : Level) × (α : Q(Sort u)) × Q($α → Sort v) := do
-  if let .forallE nm t e@(.forallE ..) bi := ty then
-    let u ← getLevel t
-    have t : Q(Sort u) := t
-    withLocalDeclQ nm bi q($t) fun var => do
-      let e' := e.instantiate1 var
-      let ⟨v, w, α, β⟩ ← mkUncurriedFunctionType e'
-      let α : Q($t → Sort v) ← mkLambdaFVars #[var] α
-      let β : Q((x : $t) → $α x → Sort w) ← mkLambdaFVars #[var] β
-      let .lam _ _ (.lam _ _ b _) _ := β | unreachable!
-      have resUniv : Level := .normalize <| .max (.max 1 u) v
-      have : resUniv =QL max (max 1 u v) := ⟨⟩
-      let psigma : Q(Sort resUniv) := q(@PSigma.{u, v} $t $α)
-      have bb := b.instantiateRev #[.proj ``PSigma 0 (.bvar 0), .proj ``PSigma 1 (.bvar 0)]
-      let newβ : Q($psigma → Sort w) := .lam `x psigma bb .default
-      return ⟨resUniv, w, q($psigma), q($newβ)⟩
-  else if let .forallE nm t b bi := ty then
-    let u ← getLevel t
-    have t : Q(Sort u) := t
-    withLocalDeclQ nm bi q($t) fun var => do
-      let b' := b.instantiate1 var
-      let v ← getLevel b'
-      return ⟨u, v, t, .lam nm t b bi⟩
-  else
-    throwError "Invalid input to mkUncurriedFunctionType, expected forall:{indentExpr ty}"
-
-def getNumForalls (e : Expr) : Nat :=
-  go e 0
-where
-  go (e : Expr) (n : Nat) : Nat :=
-    match e with
-    | .forallE _ _ b _ => go b (n + 1)
-    | _ => n
-
-def constructDPrim (e : Expr) : MetaM Expr := do
-  let ty ← inferType e
-  let ⟨u, v, α, β⟩ ← mkUncurriedFunctionType ty
-  let n := getNumForalls ty
-  have fn := mkUncurriedFunctionApp e n
-  have fn : Q((a : $α) → $β a) :=
-    if n = 1 then e else .lam `x α fn .default
-  return q(DPrim $fn)
-
 abbrev M := MonadCacheT ExprStructEq Expr MetaM
 
 set_option backward.do.legacy false in
@@ -1255,7 +1203,7 @@ theorem Eq.rec.dcomp.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : 
   apply refl_comp
 
 open DPrimrec.Tactic.Other (hasDCompThm hasDPrimThm) in
-partial def recAutoDComp (nm : Name) : StateRefT Lean.NameSet MetaM Unit := do
+partial def recAutoDComp (nm : Name) : StateRefT Lean.NameSet CoreM Unit := do
   if ← hasDCompThm nm then
     return
   if (← get).contains nm then
@@ -1265,21 +1213,21 @@ partial def recAutoDComp (nm : Name) : StateRefT Lean.NameSet MetaM Unit := do
   match info with
   | .defnInfo val =>
     handleDependencies val.value
-    autoDComp nm
+    MetaM.run' <| autoDComp nm
   | .ctorInfo _ =>
-    proveConstructorComputable nm
+    MetaM.run' <| proveConstructorComputable nm
   | .recInfo _ =>
     unless ← hasDPrimThm nm do
-      RecursorModel.proveNewRecursorPrim nm
-    proveEliminatorDCompFromDPrim nm
+      MetaM.run' <| RecursorModel.proveNewRecursorPrim nm
+    MetaM.run' <| proveEliminatorDCompFromDPrim nm
   | .thmInfo _ => pure ()
   | .axiomInfo _ => throwError "can't handle axiom {.ofConstName nm}"
   | .opaqueInfo _ => throwError "can't handle opaque {.ofConstName nm}"
   | .quotInfo _ => pure ()
   | .inductInfo _ => pure ()
 where
-  findDependencies (val : Expr) : MonadCacheT Expr Unit (StateRefT NameSet MetaM) Unit := do
-    checkCache val fun _ => Meta.withIncRecDepth do
+  findDependencies (val : Expr) : MonadCacheT Expr Unit (StateRefT NameSet CoreM) Unit := do
+    checkCache val fun _ => withIncRecDepth do
       match val with
       | .const nm _ => modify fun set => set.insert nm
       | .app f a => findDependencies f; findDependencies a
@@ -1288,7 +1236,7 @@ where
       | .proj t _ e => modify fun set => set.insert (mkRecName t); findDependencies e
       | .mdata _ e => findDependencies e
       | _ => pure ()
-  handleDependencies (val : Expr) : StateRefT NameSet MetaM Unit := do
+  handleDependencies (val : Expr) : StateRefT NameSet CoreM Unit := do
     let mut (_, candidates) ← (findDependencies val).run.run {}
     for c in candidates do
       let env ← getEnv
@@ -1298,7 +1246,7 @@ where
         setEnv env
         modify fun blacklist => blacklist.insert c
 
-def recAutoDCompMain (nm : Name) : MetaM Unit := do
+def recAutoDCompMain (nm : Name) : CoreM Unit := do
   StateRefT'.run' (s := {}) do
     let env ← getEnv
     try
@@ -1306,94 +1254,7 @@ def recAutoDCompMain (nm : Name) : MetaM Unit := do
     catch ex =>
       setEnv env
       throwError "{ex.toMessageData}\nblacklisted: {(← get).toArray}"
-    Lean.logInfo m!"blacklist: {(← get).toArray}"
 
-#eval! recAutoDCompMain ``String.all
-#eval! recAutoDCompMain ``Nat.gcd
-#eval! recAutoDCompMain ``List.mapM
-#eval! recAutoDCompMain ``List.filterMapM
-#eval! recAutoDCompMain ``List.filterMapTR
-
-#eval! recAutoDCompMain ``List.eraseDups
-
-convert_to_new List.eraseDups.dcomp
-convert_to_new List.filterMapM.dcomp
-
-instance {s : String.Slice} {s' : new_type% s}
-    {a : s.Pos} {a' : new_type% a}
-    {b : s.Pos} {b' : new_type% b} :
-    InhabitedExtra (new% a < b) where
-  default x := InhabitedExtra.default (α_extra := new% a.offset.byteIdx < b.offset.byteIdx) x
-
-def _root_.New.Lean.opaqueId.{u} : new_type% @Lean.opaqueId.{0} :=
-  fun _ _ _ h => (fun _ => _root_.Lean.opaqueId h) (Sort u)
-
-#time convert_to_new String.all.dcomp
-
-#print New.Subsingleton._induct
-
-def weirdType (b : Bool) : Type 1 :=
-  match b with
-  | false => ULift Nat
-  | true => Type
-
-def weirdValue (b : Bool) : weirdType b :=
-  match b with
-  | false => .up 1234
-  | true => Bool
-
-def weirdFunction (x : weirdType b) : Nat :=
-  match b with
-  | false => x.down
-  | true => 24
-
-def myFunction (x : Bool) : Nat :=
-  weirdFunction (weirdValue x)
-
-#eval! recAutoDCompMain ``myFunction
-convert_to_new myFunction.dcomp
-
-#eval! recAutoDCompMain ``Part.instMonad
-
-#eval! recAutoDCompMain ``Nat.rfind
-convert_to_new Nat.rfind.dcomp
-
-#print New.Nat.rfindX.dcomp
-
-#check Part.unwrap
-#print HAdd.hAdd.dcomp
-
-#print myFunction.dcomp
-
-#print Eq.rec.dprim
-#eval! recAutoDCompMain ``Quotient.rec
-convert_to_new Quotient.rec.dcomp
-
-#print DComp
-#print New.Quotient.rec.dcomp
-#print Quot.rec.dcomp
-#eval! recAutoDCompMain ``Finset.sumEquiv
-
-#print List.eq_nil_iff_forall_not_mem
-
-private lemma List.eq_nil_iff_forall_not_mem._alt :
-    type_of% @List.eq_nil_iff_forall_not_mem.{u} := by
-  intro α l
-  rcases l with _ | ⟨a, l⟩
-  · simp
-  · apply iff_of_false
-    · simp
-    · intro h
-      exact h a List.mem_cons_self
-
-convert_to_new List.eq_nil_iff_forall_not_mem._alt
-
-lemma _root_.New.List.eq_nil_iff_forall_not_mem :
-    new_type% @List.eq_nil_iff_forall_not_mem.{u} := by
-  exact new% @List.eq_nil_iff_forall_not_mem._alt.{u}
-
-convert_to_new Finset.sumEquiv.dcomp
-
-#print Finset.sumEquiv.dcomp
-
-#synth InhabitedExtra New.Nat
+initialize
+  DPrimrec.Tactic.Other.recAutoDCompDepsRef.set fun e =>
+    (recAutoDComp.handleDependencies e).run' {}

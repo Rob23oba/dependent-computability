@@ -142,10 +142,12 @@ instance {α : Sort u} (α_extra : new_type% α) [SubsingletonExtra α_extra]
     cases (SubsingletonExtra.subsingleton a).allEq a_extra b_extra
     constructor
 
+instance : SubsingletonExtra New.Nat where
+  subsingleton _ := inferInstanceAs (Subsingleton Unit)
+
 instance : FullyRepresentable New.Nat where
   default _ := ()
-  subsingleton _ := inferInstanceAs (Subsingleton Unit)
-  isRepresentable {x} _ := ⟨x, rfl⟩
+  isRepresentable {n} _ := ⟨n, rfl⟩
 
 def uniqueNatVal (n : Nat) : new_type% n := ()
 

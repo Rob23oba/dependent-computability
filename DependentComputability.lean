@@ -1,1 +1,1 @@
-import DependentComputability.Tactic.Computability
+import DependentComputability.Tactic.RecursorModel
