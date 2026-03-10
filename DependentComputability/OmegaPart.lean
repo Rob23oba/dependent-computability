@@ -35,28 +35,6 @@ def Squash.countableChoice {α : Nat → Type u} (f : ∀ i, Squash (α i)) :
     Squash (∀ i, α i) :=
   uniqueChoice (_root_.countableChoice fun i => by obtain ⟨x⟩ := f i; exact ⟨x⟩)
 
-lemma DComp.quot_iff {ctx : Sort c} {α : ctx → Sort u}
-    {r : (c : ctx) → α c → α c → Prop} (f : (c : ctx) → Quot (r c)) :
-    DComp f ↔ ∃ g : (c : ctx) → α c, DComp g ∧ ∀ c, f c = Quot.mk (r c) (g c) := by
-  constructor
-  · rintro ⟨⟩
-    use fun c => (f c).out
-    simp [DComp.unsafeIntro]
-  · intro h; exact .unsafeIntro
-
-set_option Elab.async false in
-lemma _root_.New.DComp.quot_iff.{c, u} : new_type% @DComp.quot_iff.{c, u} := by
-  intro ctx ctx' α α' r r' f f'
-  constructor
-  · intro hf ⟨g, hg, hg'⟩
-    have (c : ctx) (c' : new_type% c) (i : ℕ) :
-        Nonempty ((a : α c) × (a' : (@α' c c').1 a) ×' (@α' c c').2 a' (((ofNat Code (g cn)).eval i).get (@hg' i () i rfl).1)) := by
-  · have_new this : (∃ g : (c : ctx) → α c, DComp g ∧ ∀ c, f c = Quot.mk (r c) (g c)) → DComp f := by
-      rintro ⟨g, hg, hg'⟩
-      cases funext hg'
-      other_dcomp_tac
-    exact this_extra
-
 set_option linter.unusedVariables false in
 @[other_dprim]
 lemma Squash.countableChoice.dprim.{c, u} {ctx : Sort c}
