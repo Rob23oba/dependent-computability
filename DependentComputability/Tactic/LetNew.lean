@@ -46,7 +46,7 @@ def elabLetNewCore (cfg : TSyntax ``letConfig) (decl : TSyntax ``letDecl)
     let goalType ← goal.getType
     let res ← runTermElab do
       let letTerm ← `(let $cfg:letConfig $decl:letDecl; ?$mvarIdent)
-      elabLetDeclCore letTerm goalType initConfig
+      withPrunedLocalContextForNew <| elabLetDeclCore letTerm goalType initConfig
     let res ← instantiateMVars res
     for const in res.getUsedConstantsAsSet do
       unless (← getEnv).contains (mkNewName const) do

@@ -244,6 +244,38 @@ def populateBaseMap : MetaM (FVarIdMap Expr) := do
     extraMap := extraMap.insert baseVar decl.toExpr
   return extraMap
 
+open Lean Meta in
+def withPrunedLocalContextForNew
+    [Monad m] [MonadLCtx m] [MonadLiftT MetaM m] [MonadControlT MetaM m]
+    (x : m α) : m α := do
+  let lctx ← getLCtx
+  let localInsts ← getLocalInstances
+  let (lctx, localInsts) ← prune lctx localInsts
+  withLCtx lctx localInsts x
+where
+  prune (lctx : LocalContext) (localInsts : LocalInstances) :
+      MetaM (LocalContext × LocalInstances) := do
+    let mut toClear : FVarIdSet := {}
+    for decl in lctx do
+      toClear := toClear.insert decl.fvarId
+      let type := decl.type
+      let type ← instantiateMVars type
+      let mkExtraApp _ty (.fvar baseVar) := type | continue
+      toClear := toClear.erase baseVar
+      let some otherDecl := lctx.find? baseVar | baseVar.throwUnknown
+      unless ← findLocalDeclDependsOn otherDecl toClear.contains do
+        continue
+      for c in toClear do
+        if ← localDeclDependsOn otherDecl c then
+          logWarning m!"{otherDecl.toExpr} depends on {Expr.fvar c} which \
+            doesn't have an associated new_type%"
+          toClear := toClear.erase c
+    let mut lctx := lctx
+    for f in toClear do
+      lctx := lctx.erase f
+    let localInsts := localInsts.filter fun localInst => !toClear.contains localInst.fvar.fvarId!
+    return (lctx, localInsts)
+
 open Lean Elab Term in
 elab tk:"new% " t:term : term => do
   let expectedType? : Option Expr := ‹_›
@@ -252,7 +284,7 @@ elab tk:"new% " t:term : term => do
     let expTy ← instantiateMVars expTy
     if let mkExtraApp ty val := expTy then
       eTy ← Meta.inferType val
-  let expr ← elabTerm t eTy
+  let expr ← withPrunedLocalContextForNew <| elabTerm t eTy
   if let some expTy := expectedType? then
     let expTy ← instantiateMVars expTy
     if let mkExtraApp ty val := expTy then
