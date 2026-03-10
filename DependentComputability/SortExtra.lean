@@ -247,7 +247,7 @@ def populateBaseMap : MetaM (FVarIdMap Expr) := do
 open Lean Meta in
 def withPrunedLocalContextForNew
     [Monad m] [MonadLCtx m] [MonadLiftT MetaM m] [MonadControlT MetaM m]
-    (x : m α) : m α := do
+    (x : m α) (e? : Option Expr := none) : m α := do
   let lctx ← getLCtx
   let localInsts ← getLocalInstances
   let (lctx, localInsts) ← prune lctx localInsts
@@ -257,6 +257,8 @@ where
       MetaM (LocalContext × LocalInstances) := do
     let mut toClear : FVarIdSet := {}
     for decl in lctx do
+      unless decl.kind matches .default do
+        continue
       toClear := toClear.insert decl.fvarId
       let type := decl.type
       let type ← instantiateMVars type
@@ -270,6 +272,11 @@ where
           logWarning m!"{otherDecl.toExpr} depends on {Expr.fvar c} which \
             doesn't have an associated new_type%"
           toClear := toClear.erase c
+    if let some e := e? then
+      if ← findExprDependsOn e toClear.contains then
+        for c in toClear do
+          if ← exprDependsOn e c then
+            toClear := toClear.erase c
     let mut lctx := lctx
     for f in toClear do
       lctx := lctx.erase f
@@ -284,7 +291,8 @@ elab tk:"new% " t:term : term => do
     let expTy ← instantiateMVars expTy
     if let mkExtraApp ty val := expTy then
       eTy ← Meta.inferType val
-  let expr ← withPrunedLocalContextForNew <| elabTerm t eTy
+  let expr ← withPrunedLocalContextForNew (e? := eTy) <| elabTerm t eTy
+  synthesizeSyntheticMVarsNoPostponing
   if let some expTy := expectedType? then
     let expTy ← instantiateMVars expTy
     if let mkExtraApp ty val := expTy then
