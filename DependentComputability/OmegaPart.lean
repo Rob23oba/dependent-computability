@@ -428,3 +428,12 @@ theorem ωPart.coe_rfind (p : ℕ → ωPart Bool) :
 theorem ωPart.coe_ofOption (x : Option α) :
     (ofOption x : Part α) = x := by
   cases x <;> simp [ofOption]
+
+@[simp]
+theorem ωPart.coe_inj {x y : ωPart α} :
+    (x : Part α) = (y : Part α) ↔ x = y := by
+  constructor
+  · intro h
+    cases x; cases y
+    simpa [ωProp.coe_inj] using h
+  · rintro rfl; rfl

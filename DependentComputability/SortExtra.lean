@@ -269,8 +269,6 @@ where
         continue
       for c in toClear do
         if ← localDeclDependsOn otherDecl c then
-          logWarning m!"{otherDecl.toExpr} depends on {Expr.fvar c} which \
-            doesn't have an associated new_type%"
           toClear := toClear.erase c
     if let some e := e? then
       if ← findExprDependsOn e toClear.contains then
