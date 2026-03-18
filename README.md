@@ -69,3 +69,18 @@ lemma test_computable : Computable test := by
 In the first step, we prove `DComp test` using `dcomp_tac` and, using `have_new`, automatically get a proof in the new universe. Then, we use `DComputable.computable` to translate this proof into a proof of mathlib's `Computable` predicate.
 To help type inference, we also specify the new form of what we want to prove computable. We don't need to be so specific here though; using `new% _` is enough for the `new%` elaborator to know what to do.
 During this process, we generate many auxiliary definitions and lemmas; this doesn't work too well with `Elab.async` so we have to disable it here.
+
+## Using this project as a dependency
+
+For this project to build, you'll need to make sure that your `lean-toolchain` is `leanprover/lean4-pr-releases:pr-release-8867-9a8a69e` (which is the latest toolchain from leanprover/lean4#8867).
+This project depends on the version of mathlib from `mathlib-nightly-testing` so if you need Mathlib or Batteries in your project, don't put them in as a separate dependency; Lake will download the correct version of Mathlib automatically.
+To use this as a dependency, add this to your `lakefile.lean`:
+```lean4
+require "dependent-computability" from git "https://github.com/Rob23oba/dependent-computability"
+```
+or this to your `lakefile.toml`:
+```toml
+[[require]]
+name = "dependent-computability"
+git = "https://github.com/Rob23oba/dependent-computability"
+```
