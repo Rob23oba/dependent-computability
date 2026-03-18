@@ -746,7 +746,7 @@ def proveNewRecursorPrimAux (info : RecursorVal) (ctxLvl elimLvl : Level)
     mkLambdaFVars #[c, c', cn, cenc] res
   return q(DPrimrec.intro _ (primrec_recursorModel $descr $indLit $tfn $tprim) $res)
 
-open DPrimrec.Tactic.Other
+open DCompTac in
 def proveNewRecursorPrim (nm : Name) (dummyOnly : Bool := false) : MetaM Unit := do
   recConvertToNew nm
   let info ← getConstInfoRec nm
@@ -817,7 +817,7 @@ def proveNewRecursorPrim (nm : Name) (dummyOnly : Bool := false) : MetaM Unit :=
         Array.replicate info.numIndices .always ++ -- indices
         #[.prim] -- major
   }
-  modifyEnv (otherDPrimExt.addEntry · thmInfo)
+  modifyEnv (dcompExt.addEntry · thmInfo)
   if dummyOnly then return
   let realType ← convertTypeSimpleNew (.const dummyName (ctxLvl :: levels)) dummyType {}
   let realValue ← proveNewRecursorPrimAux info ctxLvl elimLvl ctx ctx' vars newVars
@@ -990,7 +990,7 @@ def mkEliminatorUnitFunEqThm (info : RecursorVal) (nonMajorVars : Array Expr) : 
   return (recApp.abstract motiveVars).instantiateBetaRevRange 0 motives.size motives
 
 set_option backward.do.legacy false
-open DPrimrec.Tactic in
+open DCompTac in
 def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
   let info ← getConstInfoRec decl
   unless info.largeElim do return
@@ -1009,7 +1009,7 @@ def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
   let majorCompType ← constructDComp major
   withLocalDeclD `t_comp majorCompType fun majorComp => do
     let ctxUniv' := Elab.Term.mkFreshLevelName (ctxUniv :: info.levelParams)
-    let mut compContext : Other.Context := {
+    let mut compContext : DCompTac.Context := {
       contextUniv := ctxUniv'
       localPrimThms := {}
       localCompThms := {}
@@ -1018,7 +1018,7 @@ def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
     for comp in minorsComp.push majorComp do
       let q(@DComp.{u, v} $_α $_β $f) ← inferType comp | unreachable!
       have comp : Q(DComp $f) := comp
-      compContext := Other.withBasicLocalThm.newContext false q($comp) compContext
+      compContext := withBasicLocalThm.newContext false q($comp) compContext
     let helperThm ← withLocalDeclD `c ctx fun c => do
       let nonMajorVars := (vars.take info.getFirstIndexIdx).map (·.app c)
       let majorVars := (vars.drop info.getFirstIndexIdx).map (·.app c)
@@ -1046,7 +1046,7 @@ def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
       have : $body =Q fun c => $γ c ($major c) := ⟨⟩
       have : $lhs =Q fun c => $lhs' c ($major c) () := ⟨⟩
       let result : Q(DPrim fun c : PSigma $β ↦ $lhs' c.1 c.2) ←
-        (Other.solveDPrimGoal true q(fun c : PSigma $β ↦ $lhs' c.1 c.2)).run compContext
+        (solveDPrimGoal true q(fun c : PSigma $β ↦ $lhs' c.1 c.2)).run compContext
       return q(.app (.app (.curry (.of_prim $result)) $majorComp) Unit.unit.dcomp)
     have result : Q(DComp $rhs) := q(Eq.subst $helperThm $result)
     let paramsAndMotives := vars.take info.getFirstMinorIdx
@@ -1072,7 +1072,7 @@ def proveEliminatorDCompFromDPrim (decl : Name) : MetaM Unit := do
           Array.replicate info.numIndices .always ++ -- indices
           #[.computable] -- major
     }
-    modifyEnv (Other.otherDPrimExt.addEntry · thmInfo)
+    modifyEnv (dcompExt.addEntry · thmInfo)
 
 /-!
 Special cases we handled manually in SortExtra.lean
@@ -1084,27 +1084,27 @@ set_option linter.hashCommand false
 #eval! RecursorModel.proveNewRecursorPrim ``Lean.Syntax.rec true
 #eval! RecursorModel.proveNewRecursorPrim ``Array.rec true
 
-@[other_dprim]
+@[dcomp]
 theorem List.nil.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u} :
     DPrim fun c => @List.nil (α c) := .unsafeIntro
 
-@[other_dprim]
+@[dcomp]
 theorem List.nil.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u} :
     DComp fun c => @List.nil (α c) := .of_prim List.nil.dprim
 
 set_option linter.unusedVariables false in
-@[other_dprim]
+@[dcomp]
 theorem List.cons.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
     {head : (c : ctx) → α c} (head_prim : DPrim head)
     {tail : (c : ctx) → List (α c)} (tail_prim : DPrim tail) :
     DPrim fun c => @List.cons (α c) (head c) (tail c) := .unsafeIntro
 
-@[other_dprim]
+@[dcomp]
 theorem List.cons.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u}
     {head : (c : ctx) → α c} (head_comp : DComp head)
     {tail : (c : ctx) → List (α c)} (tail_comp : DComp tail) :
     DComp fun c => @List.cons (α c) (head c) (tail c) :=
-  .app (.app (.curry (.curry (.of_prim <| by other_dcomp_tac))) head_comp) tail_comp
+  .app (.app (.curry (.curry (.of_prim <| by dcomp_tac))) head_comp) tail_comp
 
 open RecursorModel Delab
 theorem _root_.New.List.rec.dprim.{c, u_1, u} : new_type% @List.rec.dprim.{c, u_1, u} := by
@@ -1159,22 +1159,22 @@ theorem _root_.New.Array.rec.dprim.{c, u_1, u} : new_type% @Array.rec.dprim.{c, 
   exact @hfl' _ (new% ⟨c, (t c).1⟩) (Nat.pair cn (ft cn)) ⟨hcn, (hft' hcn).1⟩
 
 set_option linter.unusedVariables false in
-@[other_dprim]
+@[dcomp]
 theorem Array.mk.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
     {toList : (c : ctx) → List (α c)} (toList_prim : DPrim toList) :
     DPrim fun c => @Array.mk (α c) (toList c) := .unsafeIntro
 
-@[other_dprim]
+@[dcomp]
 theorem Array.mk.dcomp.{c, u} {ctx : Sort c} {α : ctx → Type u}
     {toList : (c : ctx) → List (α c)} (toList_comp : DComp toList) :
     DComp fun c => @Array.mk (α c) (toList c) :=
-  .app (.curry (.of_prim <| by other_dcomp_tac)) toList_comp
+  .app (.curry (.of_prim <| by dcomp_tac)) toList_comp
 
-@[other_dprim]
+@[dcomp]
 theorem False.rec.dprim.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u}
     {t : ctx → False} : DPrim fun c ↦ False.rec (motive c) (t c) := .unsafeIntro
 
-@[other_dprim]
+@[dcomp]
 theorem False.rec.dcomp.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u}
     {t : ctx → False} : DComp fun c ↦ False.rec (motive c) (t c) := .of_prim False.rec.dprim
 
@@ -1190,7 +1190,7 @@ theorem _root_.New.False.rec.dprim.{c, u} : new_type% @False.rec.dprim.{c, u} :=
   intro a
   exact (t a).elim
 
-@[other_dprim]
+@[dcomp]
 theorem Eq.rec.dprim.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : ctx) → α c}
     {motive : (c : ctx) → (b : α c) → a c = b → Sort u_1}
     {refl : (c : ctx) → motive c (a c) (Eq.refl (a c))} (refl_prim : DPrim refl)
@@ -1199,7 +1199,7 @@ theorem Eq.rec.dprim.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : 
   cases funext t
   apply refl_prim
 
-@[other_dprim]
+@[dcomp]
 theorem Eq.rec.dcomp.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : ctx) → α c}
     {motive : (c : ctx) → (b : α c) → a c = b → Sort u_1}
     {refl : (c : ctx) → motive c (a c) (Eq.refl (a c))} (refl_comp : DComp refl)
@@ -1208,7 +1208,7 @@ theorem Eq.rec.dcomp.{c, u_1, u} {ctx : Sort c} {α : ctx → Sort u} {a : (c : 
   cases funext t
   apply refl_comp
 
-open DPrimrec.Tactic.Other (hasDCompThm hasDPrimThm) in
+open DCompTac (hasDCompThm hasDPrimThm) in
 partial def recAutoDComp (nm : Name) : StateRefT Lean.NameSet CoreM Unit := do
   if ← hasDCompThm nm then
     return
@@ -1262,5 +1262,5 @@ def recAutoDCompMain (nm : Name) : CoreM Unit := do
       throwError "{ex.toMessageData}\nblacklisted: {(← get).toArray}"
 
 initialize
-  DPrimrec.Tactic.Other.recAutoDCompDepsRef.set fun e =>
+  DCompTac.recAutoDCompDepsRef.set fun e =>
     (recAutoDComp.handleDependencies e).run' {}

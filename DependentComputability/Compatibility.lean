@@ -10,7 +10,7 @@ lemma DPrim.emptyDomain {α : Sort u} {β : α → Sort v}
     funext x
     exact (IsEmpty.false x).rec
   rw [this]
-  other_dcomp_tac
+  dcomp_tac
 
 instance {α : Type u} {α' : new_type% α} [InhabitedExtra α'] :
     InhabitedExtra (new% Part α) where
@@ -160,38 +160,38 @@ theorem DPart.of_natPrimrec {f : ℕ →. ℕ} (hf : Nat.Partrec f) :
     ∃ f_extra : new_type% f, ∃ h : DPart f, new_type% h := by
   induction hf with
   | zero =>
-    exact ⟨new% _, ⟨fun _ => .some 0, by other_dcomp_tac, by simp [pure, PFun.pure]⟩, new% _⟩
+    exact ⟨new% _, ⟨fun _ => .some 0, by dcomp_tac, by simp [pure, PFun.pure]⟩, new% _⟩
   | succ =>
-    exact ⟨new% _, ⟨fun n => .some n.succ, by other_dcomp_tac, by simp⟩, new% _⟩
+    exact ⟨new% _, ⟨fun n => .some n.succ, by dcomp_tac, by simp⟩, new% _⟩
   | left =>
-    exact ⟨new% _, ⟨fun n => .some n.unpair.1, by other_dcomp_tac, by simp⟩, new% _⟩
+    exact ⟨new% _, ⟨fun n => .some n.unpair.1, by dcomp_tac, by simp⟩, new% _⟩
   | right =>
-    exact ⟨new% _, ⟨fun n => .some n.unpair.2, by other_dcomp_tac, by simp⟩, new% _⟩
+    exact ⟨new% _, ⟨fun n => .some n.unpair.2, by dcomp_tac, by simp⟩, new% _⟩
   | @pair f g hf hg fih gih =>
     obtain ⟨f', _, @⟨gf, gf', ⟨hgf₁, hgf₂⟩, ⟨hgf₁', hgf₂'⟩⟩⟩ := fih
     obtain ⟨g', _, @⟨gg, gg', ⟨hgg₁, hgg₂⟩, ⟨hgg₁', hgg₂'⟩⟩⟩ := gih
     dsimp only at hgf₁' hgf₂' hgg₁' hgg₂'
     exact ⟨new% _, ⟨fun n => (gf n).bind fun a => (gg n).map fun b => Nat.pair a b,
-      by other_dcomp_tac, by simp [Seq.seq, hgf₂, hgg₂]⟩, new% _⟩
+      by dcomp_tac, by simp [Seq.seq, hgf₂, hgg₂]⟩, new% _⟩
   | @comp f g hf hg fih gih =>
     obtain ⟨f', _, @⟨gf, gf', ⟨hgf₁, hgf₂⟩, ⟨hgf₁', hgf₂'⟩⟩⟩ := fih
     obtain ⟨g', _, @⟨gg, gg', ⟨hgg₁, hgg₂⟩, ⟨hgg₁', hgg₂'⟩⟩⟩ := gih
     dsimp only at hgf₁' hgf₂' hgg₁' hgg₂'
     exact ⟨new% _, ⟨fun n => (gg n).bind fun m => gf m,
-      by other_dcomp_tac, by simp [← hgf₂, hgg₂]⟩, new% _⟩
+      by dcomp_tac, by simp [← hgf₂, hgg₂]⟩, new% _⟩
   | @prec f g hf hg fih gih =>
     obtain ⟨f', _, @⟨gf, gf', ⟨hgf₁, hgf₂⟩, ⟨hgf₁', hgf₂'⟩⟩⟩ := fih
     obtain ⟨g', _, @⟨gg, gg', ⟨hgg₁, hgg₂⟩, ⟨hgg₁', hgg₂'⟩⟩⟩ := gih
     dsimp only at hgf₁' hgf₂' hgg₁' hgg₂'
     exact ⟨new% _, ⟨Nat.unpaired fun a n => n.rec (gf a)
-      fun y IH => IH.bind fun i => gg (a.pair (y.pair i)), by other_dcomp_tac,
+      fun y IH => IH.bind fun i => gg (a.pair (y.pair i)), by dcomp_tac,
       by simp only [Nat.unpaired, Part.bind_eq_bind]; intro n; induction n.unpair.2 <;> simp_all⟩,
       new% _⟩
   | @rfind f hf ih =>
     obtain ⟨f', _, @⟨g, g', ⟨hg₁, hg₂⟩, ⟨hg₁', hg₂'⟩⟩⟩ := ih
     dsimp only at hg₁' hg₂'
     exact ⟨new% _, ⟨fun a => .rfind fun n => (g (a.pair n)).map fun m => m = 0,
-      by other_dcomp_tac, by simp [hg₂]⟩, new% _⟩
+      by dcomp_tac, by simp [hg₂]⟩, new% _⟩
 
 set_option backward.dsimp.proofs true in
 set_option Elab.async false in
@@ -213,9 +213,9 @@ theorem natPartrec_iff_exists_dpart (f : ℕ →. ℕ) :
     have_new (eq := g'_eq) g' :=
       Quotient.countableChoice (fun n => (g n).Dom.val)
     have_new hdom : DComp fun _ : Unit => g' := by
-      rw [g'_eq]; other_dcomp_tac
+      rw [g'_eq]; dcomp_tac
     have_new hget : DComp fun n : ℕ => (g n).get := by
-      other_dcomp_tac
+      dcomp_tac
     obtain ⟨fdom, hfdom, hfdom'⟩ := hdom_extra
     obtain ⟨fget, hfget, hfget'⟩ := hget_extra
     obtain ⟨ndom, hndom₁, hndom⟩ := @hfdom' () () 0 .zero
@@ -225,7 +225,7 @@ theorem natPartrec_iff_exists_dpart (f : ℕ →. ℕ) :
     have hf_extra : new_type% hf :=
       (isRepresentable_function_iff (new% f)).mp ⟨ndom, hf'⟩
     have_new hdom : DComp fun x : Nat => (!f x.unpair.1 x.unpair.2).toNat := by
-      other_dcomp_tac
+      dcomp_tac
     obtain ⟨fdom, hfdom, hfdom'⟩ := hdom_extra
     replace hfdom := hfdom.rfind
     rw [← Partrec.nat_iff] at hfdom hfget ⊢
@@ -346,7 +346,7 @@ theorem dcomputable_iff_natPartrec (f : ℕ → ℕ) (f_extra : new_type% f) :
   constructor
   · have hf : DComp f := .unsafeIntro
     intro (hcomp : new_type% hf)
-    exact ⟨new% _, ⟨fun n => .some (f n), by other_dcomp_tac, by simp⟩, new% _⟩
+    exact ⟨new% _, ⟨fun n => .some (f n), by dcomp_tac, by simp⟩, new% _⟩
   · rintro ⟨f_extra', _, @⟨g, g', ⟨hg₁, hg₂⟩, ⟨hg₁', hg₂'⟩⟩⟩
     dsimp only at hg₁' hg₂'
     have : f_extra' = new% (f : ℕ →. ℕ) := by
@@ -354,14 +354,14 @@ theorem dcomputable_iff_natPartrec (f : ℕ → ℕ) (f_extra : new_type% f) :
         (inst := instInhabitedExtraTrueTrue) :)
     cases this
     have_new hdom (n : ℕ) : (g n : Part ℕ).Dom := by simp [← hg₂]
-    have_new hf : DComp fun n => (g n).get (hdom n) := by other_dcomp_tac
+    have_new hf : DComp fun n => (g n).get (hdom n) := by dcomp_tac
     have_new hf_eq : f = fun n => (g n).get (hdom n) := by
       funext x; simp [← ωPart.get_coe, ← hg₂]
     have_new hf : DComp f := hf_eq ▸ hf
     exact hf_extra
 
 set_option Elab.async false in
-@[other_dprim]
+@[dcomp]
 lemma Option.map.dprim.{c, u, v} {ctx : Sort c} {α : ctx → Type u} {β : ctx → Type v}
     {f : (c : ctx) → α c → β c} (f_prim : DPrim fun x : PSigma α => f x.1 x.2)
     {x : (c : ctx) → Option (α c)} (x_prim : DPrim x) :
@@ -371,9 +371,9 @@ lemma Option.map.dprim.{c, u, v} {ctx : Sort c} {α : ctx → Type u} {β : ctx 
   have : f = fun a b => g ⟨a, b⟩ := rfl
   delta Option.map Option.getD.match_1 Option.casesOn
   simp only [this]
-  other_dcomp_tac
+  dcomp_tac
 
-@[other_dprim]
+@[dcomp]
 lemma Option.get.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
     {x : (c : ctx) → Option (α c)} (x_prim : DPrim x)
     {h : (c : ctx) → (x c).isSome} :
@@ -387,7 +387,7 @@ lemma Option.get.dprim.{c, u} {ctx : Sort c} {α : ctx → Type u}
     unfold f; generalize x c = x at β_eq h f
     cases x <;> trivial
   rw [funext eq]
-  unfold f; other_dcomp_tac
+  unfold f; dcomp_tac
 
 local macro "prepare_compatible " pred:ident inst:ident ty:ident : tactic => do
   let ty_extra := Lean.mkIdent (ty.getId.appendAfter "_extra")
@@ -422,7 +422,7 @@ theorem dprimrec_iff_primrec {α : Type u} {α_extra : new_type% α}
     intro (h : new_type% f_prim)
     have_new : DPrim g := by
       simp only [g, Encodable.encode, ← αdec_eq, ← βenc_eq]
-      other_dcomp_tac
+      dcomp_tac
     exact this_extra
   · have g_prim : DPrim g := .unsafeIntro
     intro (h : new_type% g_prim)
@@ -432,7 +432,7 @@ theorem dprimrec_iff_primrec {α : Type u} {α_extra : new_type% α}
             (by simp [g])).get (by simp [g]) := by simp [g]
       rw [this]
       simp only [Encodable.decode, ← αenc_eq, ← βdec_eq]
-      other_dcomp_tac
+      dcomp_tac
     exact this_extra
 
 @[simp] lemma ωPart.ofOption_none : ofOption (none : Option α) = .none := rfl
@@ -492,7 +492,7 @@ theorem dcomputable_iff_computable {α : Type u} {α_extra : new_type% α}
     intro (h : new_type% f_comp)
     have_new : DComp g := by
       simp only [g, ← αdec_eq, ← βenc_eq]
-      other_dcomp_tac
+      dcomp_tac
     exact this_extra
   · have g_comp : DComp g := .unsafeIntro
     intro (h : new_type% g_comp)
@@ -502,7 +502,7 @@ theorem dcomputable_iff_computable {α : Type u} {α_extra : new_type% α}
           (by simp [g]) := by simp [g]
       rw [this]
       simp only [← αenc_eq, ← βdec_eq]
-      other_dcomp_tac
+      dcomp_tac
     exact this_extra
 
 def DPartrec {α : Sort u} {α' : new_type% α} {β : α → Type v} {β' : new_type% β}
@@ -529,14 +529,14 @@ theorem partrec_iff_dpartrec {α : Type u} {α_extra : new_type% α}
       obtain ⟨g, hg, hg'⟩ := hf
       cases funext hg'
       simp only [← ωPart.coe_ofOption, ← ωPart.coe_map, ← ωPart.coe_bind]
-      exact ⟨_, by other_dcomp_tac, fun _ => rfl⟩
+      exact ⟨_, by dcomp_tac, fun _ => rfl⟩
     use res
 
 instance : CompatibleEncodingRelation (new% Nat) :=
   ⟨.id, Option.some.dprim .id, new% _, new% _, new% _⟩
 
 instance : CompatibleEncodingRelation (new% PUnit.{u + 1}) :=
-  ⟨.natLit 0, by simp only [Encodable.decode]; other_dcomp_tac, new% _, new% _, new% _⟩
+  ⟨.natLit 0, by simp only [Encodable.decode]; dcomp_tac, new% _, new% _, new% _⟩
 
 instance {α : Type u} {α_extra : new_type% α} [inst : IsEmpty α] :
     CompatibleEncodingRelation (new% α) :=

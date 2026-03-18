@@ -36,16 +36,16 @@ def Squash.countableChoice {α : Nat → Type u} (f : ∀ i, Squash (α i)) :
   uniqueChoice (_root_.countableChoice fun i => by obtain ⟨x⟩ := f i; exact ⟨x⟩)
 
 set_option linter.unusedVariables false in
-@[other_dprim]
+@[dcomp]
 lemma Squash.countableChoice.dprim.{c, u} {ctx : Sort c}
     {α : ctx → Nat → Type u} (f : (c : ctx) → (i : Nat) → Squash (α c i))
     (f_prim : DPrim f) : DPrim fun c => Squash.countableChoice (f c) := .unsafeIntro
 
-@[other_dprim]
+@[dcomp]
 lemma Squash.countableChoice.dcomp.{c, u} {ctx : Sort c}
     {α : ctx → Nat → Type u} (f : (c : ctx) → (i : Nat) → Squash (α c i))
     (f_comp : DComp f) : DComp fun c => Squash.countableChoice (f c) :=
-  .app (.curry (.of_prim <| by other_dcomp_tac)) f_comp
+  .app (.curry (.of_prim <| by dcomp_tac)) f_comp
 
 lemma Part.mem_def {α : Type u} {x : Part α} {y : α} : y ∈ x ↔ ∃ h : x.Dom, x.get h = y := Iff.rfl
 

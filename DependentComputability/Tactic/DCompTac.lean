@@ -1,7 +1,7 @@
 import DependentComputability.Tactic.DCompHelperLemmas
 import DependentComputability.Tactic.Util
 
-namespace DPrimrec.Tactic.Other
+namespace DCompTac
 
 open Lean Meta Elab Term Tactic Qq
 
@@ -45,7 +45,7 @@ def DPrimTheorems.add (ths : DPrimTheorems) (th : TheoremInfo) : DPrimTheorems :
   else
     { ths with compTheorems := ths.compTheorems.insert th.declName th }
 
-initialize otherDPrimExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorems ←
+initialize dcompExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorems ←
   registerSimplePersistentEnvExtension {
     addEntryFn := DPrimTheorems.add
     addImportedFn xss :=
@@ -54,27 +54,27 @@ initialize otherDPrimExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorem
   }
 
 def hasDPrimThm (nm : Name) : CoreM Bool := do
-  return (otherDPrimExt.getState (← getEnv)).primTheorems.contains nm
+  return (dcompExt.getState (← getEnv)).primTheorems.contains nm
 
 def hasDCompThm (nm : Name) : CoreM Bool := do
-  return (otherDPrimExt.getState (← getEnv)).compTheorems.contains nm
+  return (dcompExt.getState (← getEnv)).compTheorems.contains nm
 
-def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
+def mkThmEntry (thm : Name) : MetaM TheoremInfo := do
   let val ← getConstVal thm
   forallTelescope val.type fun xs body => do
     let mkApp3 (.const thing [clvl, rlvl]) ctx α f := body |
-      throwError "invalid `other_dprim` attribute, conclusion is not DPrim or DComp"
+      throwError "invalid `dcomp` attribute, conclusion is not DPrim or DComp"
     let prim ← match thing with
       | ``DPrim => pure true
       | ``DComp => pure false
-      | _ => throwError "invalid `other_dprim` attribute, conclusion is not DPrim or DComp"
+      | _ => throwError "invalid `dcomp` attribute, conclusion is not DPrim or DComp"
     let .lam nm _ b bi ← whnfR f |
-      throwError "invalid `other_dprim` attribute, conclusion doesn't have a lambda"
+      throwError "invalid `dcomp` attribute, conclusion doesn't have a lambda"
     b.withApp fun x args => do
       let .const cnm lvls := x |
-        throwError "invalid `other_dprim` attribute, conclusion must be a const"
+        throwError "invalid `dcomp` attribute, conclusion must be a const"
       unless lvls == val.levelParams.tail.map Level.param do
-        throwError "invalid `other_dprim` attribute, bad level parameters"
+        throwError "invalid `dcomp` attribute, bad level parameters"
       unless ctx == xs[0]! do
         throwError "expected context parameter {ctx} but found {xs[0]!}"
       let mut map : Array ParamComputability := #[]
@@ -84,7 +84,7 @@ def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
         if h : j < xs.size then
           let var := xs[j]
           unless arg.eta == var.app (.bvar 0) do
-            throwError "invalid `other_dprim` attribute, parameter #{i} is \
+            throwError "invalid `dcomp` attribute, parameter #{i} is \
               {Expr.lam nm ctx arg bi} and not {var} as expected"
           if h : j + 1 < xs.size then
             let x := xs[j + 1]
@@ -102,7 +102,7 @@ def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
             map := map.push .always
             j := j + 1
         else
-          throwError "invalid `other_dprim` attribute, parameter #{i} out of range"
+          throwError "invalid `dcomp` attribute, parameter #{i} out of range"
       return {
         prim
         declName := cnm
@@ -112,11 +112,11 @@ def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
 
 initialize
   registerBuiltinAttribute {
-    name := `other_dprim
-    descr := "Attribute for `other_dcomp_tac`"
+    name := `dcomp
+    descr := "Attribute for `dcomp_tac`"
     add nm stx kind := do
-      let entry ← MetaM.run' (mkOtherThmEntry nm)
-      modifyEnv (otherDPrimExt.addEntry · entry)
+      let entry ← MetaM.run' (mkThmEntry nm)
+      modifyEnv (dcompExt.addEntry · entry)
   }
 
 def idLemma (prim : Bool) : Name :=
@@ -237,7 +237,7 @@ def extractBetasFromPSigma (ty : Expr) (n : Nat) (us : List Level := [])
     (revArgs : Array Expr := #[]) : MetaM (List Level × Array Expr) := do
   let n + 1 := n | unreachable!
   let ty ← if ty.isAppOfArity ``PSigma 2 then pure ty else whnf ty
-  let q(PSigma.{u, v} $α $β) := ty | throwError "Internal error in other_dcomp_tac"
+  let q(PSigma.{u, v} $α $β) := ty | throwError "Internal error in dcomp_tac"
   if n = 1 then
     return (u :: v :: us, revArgs.push β |>.push α)
   extractBetasFromPSigma α n (v :: us) (revArgs.push β)
@@ -256,7 +256,7 @@ def mkBVarProjProof (prim : Bool) (ctx : Expr) (b : Expr) : MetaM Expr := do
     else
       break
   assert! b matches .bvar 0
-  let thm ← DCompHelperTheorems.mkBVarLemma (comp := !prim) (priv := true) last n
+  let thm ← mkBVarLemma (comp := !prim) (priv := true) last n
   let (us, revArgs) ← extractBetasFromPSigma ctx (if last then n + 1 else n + 2)
   return mkAppRev (.const thm us) revArgs
 
@@ -394,7 +394,7 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
           let res ← solveDPrimGoal prim q($f')
           mkLetFVars #[var, var, var_comp] (generalizeNondepLet := false) res
     | .const nm us =>
-      let state := otherDPrimExt.getState (← getEnv)
+      let state := dcompExt.getState (← getEnv)
       let thms := if prim then state.primTheorems else state.compTheorems
       let some thm := thms.get? nm |
         throwError "no {if prim then "primrec" else "computability"} theorem available for {nm}"
@@ -444,16 +444,16 @@ end
 
 initialize recAutoDCompDepsRef : IO.Ref (Expr → CoreM Unit) ← IO.mkRef (fun _ => pure ())
 
-elab "other_dcomp_tac" : tactic => do
+elab "dcomp_tac" : tactic => do
   let goal ← getMainGoal
   goal.withContext do
   let type ← withReducible <| goal.getType'
   let mkApp3 (.const nm [clvl, rlvl]) ctx res f := type |
-    throwError "invalid goal for other_dcomp_tac: {type}"
+    throwError "invalid goal for dcomp_tac: {type}"
   let prim ←
     if nm = ``DComp then pure false
     else if nm = ``DPrim then pure true
-    else throwError "invalid goal for other_dcomp_tac: {type}"
+    else throwError "invalid goal for dcomp_tac: {type}"
   have ctx : Q(Sort clvl) := ctx
   have res : Q($ctx → Sort rlvl) := res
   have f : Q((c : $ctx) → $res c) := f
@@ -491,4 +491,4 @@ elab "other_dcomp_tac" : tactic => do
   let res ← (solveDPrimGoal prim q($f)).run context
   goal.assign res
 
-end DPrimrec.Tactic.Other
+end DCompTac

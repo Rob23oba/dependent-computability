@@ -5,7 +5,7 @@ open Lean Meta Qq
 
 set_option backward.do.legacy false
 
-namespace DCompHelperTheorems
+namespace DCompTac
 
 def withManyDependentSorts (n : Nat)
     (k : (u : Level) → Q(Sort u) → Array Expr → MetaM α) : MetaM α :=
@@ -86,13 +86,13 @@ def mkBVarLemma (comp : Bool) (priv : Bool) (last : Bool) (n : Nat) : MetaM Name
 termination_by if comp then 3 * n + 2 else if last then 3 * n else 3 * n + 1
 decreasing_by all_goals grind
 
-end DCompHelperTheorems
+end DCompTac
 
 lemma DPrim.bvar_last_0 {α : Sort u} : DPrim fun c : α => c := .id
 lemma DComp.bvar_last_0 {α : Sort u} : DComp fun c : α => c := .id
 
 -- probably as much as you'll ever need
-open DCompHelperTheorems in
+open DCompTac in
 run_meta
   for i in *...48 do
     discard <| mkBVarLemma (comp := true) (priv := false) (last := false) i
