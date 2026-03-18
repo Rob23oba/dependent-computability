@@ -1,4 +1,4 @@
-import DependentComputability.Tactic.DCompHelperLemmas2
+import DependentComputability.Tactic.DCompHelperLemmas
 import DependentComputability.Tactic.Util
 
 namespace DPrimrec.Tactic.Other
