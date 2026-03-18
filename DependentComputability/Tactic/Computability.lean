@@ -1,4 +1,3 @@
-import DependentComputability.Tactic.NewDPrimStep
 import DependentComputability.Tactic.OtherDPrimStep
 import DependentComputability.Tactic.Delab
 import DependentComputability.Tactic.LetNew
@@ -61,13 +60,9 @@ private theorem ycomb_part (thing : Code) : Nat.Partrec (ycomb thing) := by
     refine .comp .encode ?_
     exact Code.primrec₂_curry.to_comp.comp (.const _) (.comp .fst .unpair)
 
-attribute [dprim] New.PSigma.fst.computable New.PSigma.snd.computable New.PSigma.mk.computable
-  New.PSigma.fst.primrec New.PSigma.snd.primrec New.PSigma.mk.primrec
-
 attribute [other_dprim] PSigma.fst.dcomp PSigma.snd.dcomp PSigma.mk.dcomp
   PSigma.fst.dprim PSigma.snd.dprim PSigma.mk.dprim
 
-@[dprim]
 theorem _root_.New.Subtype.val.primrec.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
     {α : ctx → Sort u} {α_extra : new_type% α}
     {p : (c : ctx) → α c → Prop} {p_extra : new_type% p}
@@ -78,7 +73,6 @@ theorem _root_.New.Subtype.val.primrec.{c, u} {ctx : Sort c} {ctx_extra : new_ty
   use g, hg
   simpa using hg'
 
-@[dprim]
 theorem _root_.New.Subtype.mk.primrec.{c, u} {ctx : Sort c} {ctx_extra : new_type% ctx}
     {α : ctx → Sort u} {α_extra : new_type% α}
     {p : (c : ctx) → α c → Prop} {p_extra : new_type% p}
@@ -260,9 +254,6 @@ theorem _root_.New.Acc.rec.computable.{c, v, u}
     use z, hz, hz'
   simpa only [hg', c] using hc
 
-example : DComputable (new% fun x : Nat => x) := by
-  dcomp_tac
-
 set_option linter.unusedVariables false in
 @[other_dprim]
 lemma Acc.rec.dcomp.{c, v, u}
@@ -276,7 +267,6 @@ lemma Acc.rec.dcomp.{c, v, u}
 lemma New.Acc.rec.dcomp.{c, v, u} : new_type% @Acc.rec.dcomp.{c, v, u} :=
   fun _ _ _ _ _ _ _ _ _ _ _ hi _ _ _ ha _ _ => New.Acc.rec.computable hi ha
 
-@[dprim]
 theorem New.PUnit.unit.primrec.{u, v} {ctx : Sort u} {ctx_extra : new_type% ctx} :
     DPrimrec (new% fun _ : ctx => PUnit.unit.{v}) := by
   refine .const' (x_extra := new% PUnit.unit.{v}) ?_
@@ -302,16 +292,6 @@ lemma New.PUnit.unit.dprim.{u, v} : new_type% @PUnit.unit.dprim.{u, v} := @New.P
 @[other_dprim] lemma Unit.unit.dprim {ctx : Sort u} : DPrim (fun _ : ctx => ()) := PUnit.unit.dprim
 @[other_dprim] lemma Unit.unit.dcomp {ctx : Sort u} : DComp (fun _ : ctx => ()) := PUnit.unit.dcomp
 
-example : DComputable (new% fun (x : Nat → Nat) y => x y) := by
-  dcomp_tac
-
-example : DComputable (new% fun (x : Nat → Nat) y => x (x y)) := by
-  dcomp_tac
-
-example : DComputable (new% fun (x : Nat → (_ : Nat) ×' Nat) y => x (x y).2) := by
-  dcomp_tac
-
-@[dprim]
 theorem _root_.New.Nat.zero.primrec {ctx : Sort u} {ctx_extra : new_type% ctx} :
     DPrimrec (new% fun _ : ctx => Nat.zero) := .const' (x_extra := new% Nat.zero) ⟨0, rfl⟩
 
@@ -320,7 +300,6 @@ theorem _root_.New.Nat.zero.primrec {ctx : Sort u} {ctx_extra : new_type% ctx} :
   .of_prim Nat.zero.dprim
 lemma New.Nat.zero.dprim : new_type% @Nat.zero.dprim.{u} := @New.Nat.zero.primrec
 
-@[dprim]
 theorem _root_.New.Nat.succ.primrec {ctx : Sort u} {ctx_extra : new_type% ctx}
     {f : ctx → ℕ} {f_extra : new_type% f}
     (f_comp : DPrimrec (new% f)) :
@@ -337,7 +316,6 @@ set_option linter.unusedVariables.funArgs false in
 lemma New.Nat.succ.dprim : new_type% @Nat.succ.dprim.{u} :=
   fun _ _ _ _ _ hf => New.Nat.succ.primrec hf
 
-@[dprim]
 theorem _root_.New.Nat.rec.primrec {ctx : Sort u} {ctx_extra : new_type% ctx}
     {motive : ctx → ℕ → Sort v} {motive_extra : new_type% motive}
     {zero : (c : ctx) → motive c .zero}
