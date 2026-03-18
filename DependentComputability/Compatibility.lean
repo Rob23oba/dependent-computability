@@ -1,6 +1,5 @@
 import DependentComputability.OmegaPart
 import DependentComputability.Bare
-import Batteries
 
 open scoped Delab
 
@@ -428,42 +427,6 @@ theorem dprimrec_iff_primrec {α : Type u} {α_extra : new_type% α}
     exact this_extra
 
 alias ⟨DPrimrec.primrec, _⟩ := dprimrec_iff_primrec
-
-@[simp] lemma ωPart.ofOption_none : ofOption (none : Option α) = .none := rfl
-@[simp] lemma ωPart.ofOption_some (x : α) : ofOption (some x) = .some x := rfl
-
-@[simp] lemma ωPart.dom_none : (.none : ωPart α).Dom = .false := rfl
-@[simp] lemma ωPart.dom_some (x : α) : (ωPart.some x).Dom = .true := rfl
-@[simp] lemma ωPart.get_some (x : α) : (ωPart.some x).get (by simp) = x := rfl
-
-@[simp] lemma ωPart.dom_bind (x : ωPart α) (f : α → ωPart β) :
-    (x.bind f).Dom = x.Dom.bind (fun h => (f (x.get h)).Dom) := rfl
-@[simp] lemma ωPart.get_bind (x : ωPart α) (f : α → ωPart β) (h) :
-    (x.bind f).get h = (f (x.get (ωProp.coe_bind.mp h).1)).get (ωProp.coe_bind.mp h).2 := rfl
-
-@[simp] lemma ωPart.dom_map (x : ωPart α) (f : α → β) : (x.map f).Dom = x.Dom := rfl
-@[simp] lemma ωPart.get_map (x : ωPart α) (f : α → β) (h) :
-    (x.map f).get h = f (x.get h) := rfl
-
-@[ext]
-lemma ωProp.ext {x y : ωProp} (h : (x : Prop) ↔ (y : Prop)) : x = y := coe_inj.mp h
-
-@[ext]
-lemma ωPart.ext {x y : ωPart α}
-    (h : x.Dom = y.Dom) (h' : ∀ h₁ h₂, x.get h₁ = y.get h₂) : x = y := by
-  cases x; cases y
-  cases h; cases funext fun h => h' h h
-  rfl
-
-@[simp]
-lemma ωPart.bind_none (f : α → ωPart β) : ωPart.none.bind f = .none := by
-  ext h h'
-  · simp
-  · simp at h'
-
-@[simp]
-lemma ωPart.bind_some (x : α) (f : α → ωPart β) : (ωPart.some x).bind f = f x := by
-  ext <;> simp
 
 set_option Elab.async false in -- Elab.async doesn't play well with `have_new`
 theorem dcomputable_iff_computable {α : Type u} {α_extra : new_type% α}

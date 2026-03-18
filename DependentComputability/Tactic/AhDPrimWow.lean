@@ -1,7 +1,7 @@
-import DependentComputability.Tactic.DCompHelperLemmas
+import DependentComputability.Tactic.DCompHelperLemmas2
 import DependentComputability.Tactic.Util
 
-namespace DCompTac
+namespace DPrimrec.Tactic.Other
 
 open Lean Meta Elab Term Tactic Qq
 
@@ -45,7 +45,7 @@ def DPrimTheorems.add (ths : DPrimTheorems) (th : TheoremInfo) : DPrimTheorems :
   else
     { ths with compTheorems := ths.compTheorems.insert th.declName th }
 
-initialize dcompExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorems ←
+initialize otherDPrimExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorems ←
   registerSimplePersistentEnvExtension {
     addEntryFn := DPrimTheorems.add
     addImportedFn xss :=
@@ -54,27 +54,27 @@ initialize dcompExt : SimplePersistentEnvExtension TheoremInfo DPrimTheorems ←
   }
 
 def hasDPrimThm (nm : Name) : CoreM Bool := do
-  return (dcompExt.getState (← getEnv)).primTheorems.contains nm
+  return (otherDPrimExt.getState (← getEnv)).primTheorems.contains nm
 
 def hasDCompThm (nm : Name) : CoreM Bool := do
-  return (dcompExt.getState (← getEnv)).compTheorems.contains nm
+  return (otherDPrimExt.getState (← getEnv)).compTheorems.contains nm
 
-def mkThmEntry (thm : Name) : MetaM TheoremInfo := do
+def mkOtherThmEntry (thm : Name) : MetaM TheoremInfo := do
   let val ← getConstVal thm
   forallTelescope val.type fun xs body => do
     let mkApp3 (.const thing [clvl, rlvl]) ctx α f := body |
-      throwError "invalid `dcomp` attribute, conclusion is not DPrim or DComp"
+      throwError "invalid `other_dprim` attribute, conclusion is not DPrim or DComp"
     let prim ← match thing with
       | ``DPrim => pure true
       | ``DComp => pure false
-      | _ => throwError "invalid `dcomp` attribute, conclusion is not DPrim or DComp"
+      | _ => throwError "invalid `other_dprim` attribute, conclusion is not DPrim or DComp"
     let .lam nm _ b bi ← whnfR f |
-      throwError "invalid `dcomp` attribute, conclusion doesn't have a lambda"
+      throwError "invalid `other_dprim` attribute, conclusion doesn't have a lambda"
     b.withApp fun x args => do
       let .const cnm lvls := x |
-        throwError "invalid `dcomp` attribute, conclusion must be a const"
+        throwError "invalid `other_dprim` attribute, conclusion must be a const"
       unless lvls == val.levelParams.tail.map Level.param do
-        throwError "invalid `dcomp` attribute, bad level parameters"
+        throwError "invalid `other_dprim` attribute, bad level parameters"
       unless ctx == xs[0]! do
         throwError "expected context parameter {ctx} but found {xs[0]!}"
       let mut map : Array ParamComputability := #[]
@@ -84,7 +84,7 @@ def mkThmEntry (thm : Name) : MetaM TheoremInfo := do
         if h : j < xs.size then
           let var := xs[j]
           unless arg.eta == var.app (.bvar 0) do
-            throwError "invalid `dcomp` attribute, parameter #{i} is \
+            throwError "invalid `other_dprim` attribute, parameter #{i} is \
               {Expr.lam nm ctx arg bi} and not {var} as expected"
           if h : j + 1 < xs.size then
             let x := xs[j + 1]
@@ -102,7 +102,7 @@ def mkThmEntry (thm : Name) : MetaM TheoremInfo := do
             map := map.push .always
             j := j + 1
         else
-          throwError "invalid `dcomp` attribute, parameter #{i} out of range"
+          throwError "invalid `other_dprim` attribute, parameter #{i} out of range"
       return {
         prim
         declName := cnm
@@ -112,11 +112,11 @@ def mkThmEntry (thm : Name) : MetaM TheoremInfo := do
 
 initialize
   registerBuiltinAttribute {
-    name := `dcomp
-    descr := "Attribute for `dcomp_tac`"
+    name := `other_dprim
+    descr := "Attribute for `other_dcomp_tac`"
     add nm stx kind := do
-      let entry ← MetaM.run' (mkThmEntry nm)
-      modifyEnv (dcompExt.addEntry · entry)
+      let entry ← MetaM.run' (mkOtherThmEntry nm)
+      modifyEnv (otherDPrimExt.addEntry · entry)
   }
 
 def idLemma (prim : Bool) : Name :=
@@ -141,6 +141,7 @@ def mkPred (prim : Bool) {u v : Level} {α : Q(Sort u)} {β : Q($α → Sort v)}
 partial def whnfFast (e : Expr) (zeta : Bool) (argsRev : Array Expr := #[]) : MetaM Expr := do
   match e with
   | .app f a => whnfFast f zeta (argsRev.push a)
+  | .proj .. => return argsRev.foldr (fun a f => f.app a) (← projToFn e)
   | .mdata _ e => whnfFast e zeta argsRev
   | .lam .. => if argsRev.isEmpty then return e else whnfFast (e.betaRev argsRev) zeta
   | .letE _ _ v b _ =>
@@ -156,7 +157,7 @@ structure LocalThm where
 
 def LocalThm.instantiate (thm : LocalThm) (univ : Name) (clvl : Level) (ctx : Expr) : Expr :=
   let repl (lvl : Name) : Option Level := if lvl = univ then clvl else none
-  (thm.value.instantiateLevelParamsCore repl).betaRev #[ctx]
+  .app (thm.value.instantiateLevelParamsCore repl) ctx
 
 structure Context where
   contextUniv : Name
@@ -221,83 +222,6 @@ partial def isTriviallyIrrelevant (e : Expr) : MetaM <| Option (Level × Expr) :
   else
     return none
 
-def isBVarProjCont (e : Expr) : Bool :=
-  match e with
-  | .proj ``PSigma 0 e => isBVarProjCont e
-  | .bvar 0 => true
-  | _ => false
-
-def isBVarProj (e : Expr) : Bool :=
-  match e with
-  | .proj ``PSigma 0 e | .proj ``PSigma 1 e =>
-    isBVarProjCont e
-  | _ => false
-
-def extractBetasFromPSigma (ty : Expr) (n : Nat) (us : List Level := [])
-    (revArgs : Array Expr := #[]) : MetaM (List Level × Array Expr) := do
-  let n + 1 := n | unreachable!
-  let ty ← if ty.isAppOfArity ``PSigma 2 then pure ty else whnf ty
-  let q(PSigma.{u, v} $α $β) := ty | throwError "Internal error in dcomp_tac"
-  if n = 1 then
-    return (u :: v :: us, revArgs.push β |>.push α)
-  extractBetasFromPSigma α n (v :: us) (revArgs.push β)
-
-def mkBVarProjProofAux (prim : Bool) (ctx : Expr) (n : Nat) (last : Bool) :
-    MetaM (Level × Expr × Expr) := do
-  if n > 16 then
-    let thm ← mkBVarLemma (comp := !prim) (priv := false) (last := true) 16
-    let (us, revArgs) ← extractBetasFromPSigma ctx 17
-    let u ← getLevel ctx
-    have ctx : Q(Sort u) := ctx
-    have v := us.head!
-    have ctx' : Q(Sort v) := revArgs.back!
-    let ⟨reslvl, resType, subproof1⟩ ← mkBVarProjProofAux prim ctx' (n - 16) last
-    have resType : Q($ctx' → Sort reslvl) := resType
-    let subproof2 := mkAppRev (.const thm us) revArgs
-    let proj : Expr := (.proj ``PSigma 0)^[n - 16] (.bvar 0)
-    let proj := if last then proj else .proj ``PSigma 1 proj
-    have f : Q((c : $ctx') → $resType c) := .lam `c ctx' proj .default
-    have g : Q($ctx → $ctx') := .lam `c ctx ((.proj ``PSigma 0)^[16] (.bvar 0)) .default
-    have resType : Q($ctx → Sort reslvl) :=
-      .lam `c ctx (resType.betaRev #[(.proj ``PSigma 0)^[16] (.bvar 0)]) .default
-    if prim then
-      have subproof1 : Q(DPrim $f) := subproof1
-      have subproof2 : Q(DPrim $g) := subproof2
-      subproof1.check
-      subproof2.check
-      let res := ⟨reslvl, resType, q(DPrim.comp $subproof1 $subproof2)⟩
-      return res
-    else
-      have subproof1 : Q(DComp $f) := subproof1
-      have subproof2 : Q(DComp $g) := subproof2
-      subproof1.check
-      subproof2.check
-      return ⟨reslvl, resType, q(DComp.comp $subproof1 $subproof2)⟩
-  let thm ← mkBVarLemma (comp := !prim) (priv := true) last n
-  let (us, revArgs) ← extractBetasFromPSigma ctx (if last then n + 1 else n + 2)
-  if last then
-    return ⟨us.head!, .lam `c ctx revArgs.back! .default, mkAppRev (.const thm us) revArgs⟩
-  else
-    let proj : Expr := n.repeat (.proj ``PSigma 0) (.bvar 0)
-    let projTy : Expr := revArgs[revArgs.size - 2]!.betaRev #[.proj ``PSigma 0 proj]
-    return ⟨us.tail.head!, .lam `c ctx projTy .default, mkAppRev (.const thm us) revArgs⟩
-
-def mkBVarProjProof (prim : Bool) (ctx : Expr) (b : Expr) : MetaM Expr := do
-  let mut b := b
-  let mut last := true
-  if let .proj ``PSigma 1 e := b then
-    b := e
-    last := false
-  let mut n := 0
-  repeat
-    if let .proj ``PSigma 0 e := b then
-      b := e
-      n := n + 1
-    else
-      break
-  assert! b matches .bvar 0
-  let ⟨_u, _res, proof⟩ ← mkBVarProjProofAux prim ctx n last
-  return proof
 
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
@@ -318,55 +242,9 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
   have b' : Q((c : $ctx) → $t' c → Sort b'lvl) := b'
   have : rlvl =QL imax t'lvl b'lvl := ⟨⟩
   have : $res =Q fun c => (x : $t' c) → $b' c x := ⟨⟩
-  let f' : Q((x : PSigma $t') → $b' x.1 x.2) := .lam `c q(PSigma $t')
-    (Impl.betaRev' f [.proj ``PSigma 1 (.bvar 0), .proj ``PSigma 0 (.bvar 0)]) .default
-  let proof ← solveDPrimGoal false q($f')
+  let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f x.1 x.2)
   return match prim with
   | true | false => q(.curry $proof)
-
-partial def handleOverApplication
-    (prim : Bool) {clvl rlvl : Level} {ctx : Q(Sort clvl)} {res : Q($ctx → Sort rlvl)}
-    (f : Q((a : $ctx) → $res a)) (b val : Expr) (overArgs : Subarray Expr) :
-    M Expr := do
-  if overArgs.isEmpty then
-    return val
-  let .lam nm _ _ bi := id f | unreachable!
-  let false := prim |
-    try
-      return ← handleUnderApplication prim q($f)
-    catch _ =>
-      withLocalDecl nm bi ctx fun var => do
-        throwError "invalid over-application in primrec goal: \
-          expected at most {overArgs.start} arguments but found {overArgs.stop} in\
-          {indentExpr <| b.instantiate1 var}"
-  let mut type ←
-    withLocalDeclQ nm bi q($ctx) fun var => do
-      let mut type ← inferType (b.instantiate1 var)
-      if getRawForallArity type < overArgs.size then
-        type ← liftM <| forallBoundedTelescope type (some overArgs.size) mkForallFVars
-      return type.abstract #[var]
-  let mut b := b
-  let mut val := val
-  for arg in overArgs do
-    let .forallE nm' t' b' bi' := id type |
-      withLocalDecl nm bi ctx fun var =>
-        throwError "function expected at{indentExpr (b.instantiate1 var)}\n\
-          but found type{indentExpr (type.instantiate1 var)}"
-    let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
-    let b'lvl ← withLocalDecl nm bi ctx fun var =>
-      withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>
-        getLevel (b'.instantiateRev #[var, var'])
-    have t'lam : Q($ctx → Sort t'lvl) := .lam nm ctx t' bi
-    have b'lam : Q((c : $ctx) → $t'lam c → Sort b'lvl) :=
-      .lam nm ctx (.lam nm' t' b' bi') bi
-    have bLambda : Q((c : $ctx) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx b bi
-    have argLambda : Q((c : $ctx) → $t'lam c) := .lam nm ctx arg bi
-    have val' : Q(DComp $bLambda) := val
-    let argProof ← solveDPrimGoal false q($argLambda)
-    val := q(DComp.app $val' $argProof)
-    type := b'.instantiate1 arg
-    b := b.app arg
-  return val
 
 -- assumes that `f` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
@@ -384,14 +262,9 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       let _irrel : Q((x : $ctx) → Irrel ($res x)) ← mkLambdaFVars #[var] irrel
       return match prim with
       | true | false => q(.irrel)
-  let mut b ← whnfFast b (← read).zeta
-  if isBVarProj b.getAppFn then
-    let proof ← mkBVarProjProof prim ctx b.getAppFn
-    return ← handleOverApplication prim q($f) b.getAppFn proof b.getAppArgs[*...*]
-  if b.getAppFn.isProj then
-    b ← withLocalDeclD `c ctx fun var => do
-      let b := b.instantiate1 var
-      return (b.updateFn (← projToFn b.getAppFn)).abstract #[var]
+  let b ← withLocalDeclD `c ctx fun var => do
+    return (← whnfFast (b.instantiate1 var) (← read).zeta).abstract #[var]
+  trace[debug] "after whnfFast: {b}"
   b.withApp fun fn args => do
   let thm ← match fn with
     | .sort u =>
@@ -433,7 +306,7 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
           let res ← solveDPrimGoal prim q($f')
           mkLetFVars #[var, var, var_comp] (generalizeNondepLet := false) res
     | .const nm us =>
-      let state := dcompExt.getState (← getEnv)
+      let state := otherDPrimExt.getState (← getEnv)
       let thms := if prim then state.primTheorems else state.compTheorems
       let some thm := thms.get? nm |
         throwError "no {if prim then "primrec" else "computability"} theorem available for {nm}"
@@ -476,23 +349,58 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       val := val.app subgoal
   if args.size = thm.paramInfos.size then
     return val
-  let b := mkAppN fn (args.take thm.paramInfos.size)
-  handleOverApplication prim q($f) b val args[thm.paramInfos.size...*]
+  -- over-application (ensure we are in computable territory)
+  let false := prim |
+    try
+      return ← handleUnderApplication prim q($f)
+    catch _ =>
+      withLocalDecl nm bi ctx fun var => do
+        throwError "invalid over-application in primrec goal: \
+          expected at most {thm.paramInfos.size} arguments but found {args.size} in\
+          {indentExpr <| b.instantiate1 var}"
+  let mut b := mkAppN fn (args.take thm.paramInfos.size)
+  let mut type ←
+    withLocalDeclQ nm bi q($ctx) fun var => do
+      let mut type ← inferType (b.instantiate1 var)
+      if getRawForallArity type < args.size - thm.paramInfos.size then
+        type ← liftM <| forallBoundedTelescope type (some (args.size - thm.paramInfos.size))
+            mkForallFVars
+      return type.abstract #[var]
+  for arg in args[thm.paramInfos.size...*] do
+    let .forallE nm' t' b' bi' := id type |
+      withLocalDecl nm bi ctx fun var =>
+        throwError "function expected at{indentExpr (b.instantiate1 var)}\n\
+          but found type{indentExpr (type.instantiate1 var)}"
+    let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
+    let b'lvl ← withLocalDecl nm bi ctx fun var =>
+      withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>
+        getLevel (b'.instantiateRev #[var, var'])
+    have t'lam : Q($ctx → Sort t'lvl) := .lam nm ctx t' bi
+    have b'lam : Q((c : $ctx) → $t'lam c → Sort b'lvl) :=
+      .lam nm ctx (.lam nm' t' b' bi') bi
+    have bLambda : Q((c : $ctx) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx b bi
+    have argLambda : Q((c : $ctx) → $t'lam c) := .lam nm ctx arg bi
+    have val' : Q(DComp $bLambda) := val
+    let argProof ← solveDPrimGoal false q($argLambda)
+    val := q(DComp.app $val' $argProof)
+    type := b'.instantiate1 arg
+    b := b.app arg
+  return val
 
 end
 
 initialize recAutoDCompDepsRef : IO.Ref (Expr → CoreM Unit) ← IO.mkRef (fun _ => pure ())
 
-elab "dcomp_tac" : tactic => do
+elab "other_dcomp_tac" : tactic => do
   let goal ← getMainGoal
   goal.withContext do
   let type ← withReducible <| goal.getType'
   let mkApp3 (.const nm [clvl, rlvl]) ctx res f := type |
-    throwError "invalid goal for dcomp_tac: {type}"
+    throwError "invalid goal for other_dcomp_tac: {type}"
   let prim ←
     if nm = ``DComp then pure false
     else if nm = ``DPrim then pure true
-    else throwError "invalid goal for dcomp_tac: {type}"
+    else throwError "invalid goal for other_dcomp_tac: {type}"
   have ctx : Q(Sort clvl) := ctx
   have res : Q($ctx → Sort rlvl) := res
   have f : Q((c : $ctx) → $res c) := f
@@ -530,4 +438,4 @@ elab "dcomp_tac" : tactic => do
   let res ← (solveDPrimGoal prim q($f)).run context
   goal.assign res
 
-end DCompTac
+end DPrimrec.Tactic.Other

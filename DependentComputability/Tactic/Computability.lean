@@ -8,11 +8,9 @@ open scoped Delab
 set_option backward.do.legacy false
 
 -- probably as much as you'll ever need
--- note: this causes a maxHeartbeats exceeded in Lean.LibrarySuggestions.SymbolFrequency
--- during build not sure what to do about that
 open DCompTac in
 run_meta
-  for i in *...32 do
+  for i in *...=16 do
     recConvertToNew <| ← mkBVarLemma (comp := true) (priv := false) (last := false) i
     recConvertToNew <| ← mkBVarLemma (comp := true) (priv := false) (last := true) i
 

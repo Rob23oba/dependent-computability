@@ -372,6 +372,19 @@ protected def ωPart.some (x : α) : ωPart α where
   Dom := .true
   get _ := x
 
+@[elab_as_elim, cases_eliminator]
+theorem cases {motive : ωPart α → Prop} (none : motive .none) (some : ∀ x, motive (.some x))
+    (t : ωPart α) : motive t := by
+  rcases t with ⟨dom, get⟩
+  cases dom
+  · convert none
+    funext h
+    simp at h
+  · exact some (get (by simp))
+
+@[ext]
+lemma ωProp.ext {x y : ωProp} (h : (x : Prop) ↔ (y : Prop)) : x = y := coe_inj.mp h
+
 protected def ωPart.bind (x : ωPart α) (f : α → ωPart β) : ωPart β where
   Dom := .bind x.Dom (fun h => (f (x.get h)).Dom)
   get h := (f (x.get (ωProp.coe_bind.mp h).1)).get (ωProp.coe_bind.mp h).2
@@ -434,6 +447,51 @@ theorem ωPart.coe_inj {x y : ωPart α} :
     (x : Part α) = (y : Part α) ↔ x = y := by
   constructor
   · intro h
-    cases x; cases y
+    induction x; induction y
     simpa [ωProp.coe_inj] using h
   · rintro rfl; rfl
+
+@[simp] lemma ωPart.ofOption_none : ofOption (none : Option α) = .none := rfl
+@[simp] lemma ωPart.ofOption_some (x : α) : ofOption (some x) = .some x := rfl
+
+@[simp] lemma ωPart.dom_none : (.none : ωPart α).Dom = .false := rfl
+@[simp] lemma ωPart.dom_some (x : α) : (ωPart.some x).Dom = .true := rfl
+@[simp] lemma ωPart.get_some (x : α) : (ωPart.some x).get (by simp) = x := rfl
+
+@[simp] lemma ωPart.none_ne_some (x : α) : ωPart.none ≠ .some x := by
+  apply ne_of_apply_ne (·.Dom : ωPart α → Prop)
+  simp
+@[simp] lemma ωPart.some_ne_none (x : α) : ωPart.some x ≠ .none := (none_ne_some x).symm
+@[simp] lemma ωPart.some_inj {x y : α} : ωPart.some x = .some y ↔ x = y := by
+  simp [ωPart.some, funext_iff]
+
+@[simp] lemma ωPart.dom_bind (x : ωPart α) (f : α → ωPart β) :
+    (x.bind f).Dom = x.Dom.bind (fun h => (f (x.get h)).Dom) := rfl
+@[simp] lemma ωPart.get_bind (x : ωPart α) (f : α → ωPart β) (h) :
+    (x.bind f).get h = (f (x.get (ωProp.coe_bind.mp h).1)).get (ωProp.coe_bind.mp h).2 := rfl
+
+@[simp] lemma ωPart.dom_map (x : ωPart α) (f : α → β) : (x.map f).Dom = x.Dom := rfl
+@[simp] lemma ωPart.get_map (x : ωPart α) (f : α → β) (h) :
+    (x.map f).get h = f (x.get h) := rfl
+
+@[ext]
+lemma ωPart.ext {x y : ωPart α}
+    (h : x.Dom = y.Dom) (h' : ∀ h₁ h₂, x.get h₁ = y.get h₂) : x = y := by
+  induction x; induction y
+  cases h; cases funext fun h => h' h h
+  rfl
+
+@[simp]
+lemma ωPart.bind_none (f : α → ωPart β) : ωPart.none.bind f = .none := by
+  ext h h'
+  · simp
+  · simp at h'
+
+@[simp]
+lemma ωPart.bind_some (x : α) (f : α → ωPart β) : (ωPart.some x).bind f = f x := by
+  ext <;> simp
+
+@[simp]
+theorem ωPart.ofOption_inj {x y : Option α} :
+    (ofOption x : ωPart α) = (ofOption y : ωPart α) ↔ x = y := by
+  cases x <;> cases y <;> simp
