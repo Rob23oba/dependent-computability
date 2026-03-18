@@ -1,138 +1,5 @@
-import DependentComputability.SortExtra
+import DependentComputability.Tactic.DCompHelperLemmas2
 import DependentComputability.Tactic.Util
-
-inductive DComp {α : Sort u} {β : α → Sort v} (f : (a : α) → β a) : Prop where
-  | unsafeIntro
-
-inductive DPrim {α : Sort u} {β : α → Sort v} (f : (a : α) → β a) : Prop where
-  | unsafeIntro
-
-class Irrel (α : Sort u) : Prop where
-  unsafeIntro ::
-
-def _root_.New.DComp.{u, v} : new_type% @DComp.{u, v} :=
-  fun _ _ _ _ _ f => .mk (fun _ => DComputable f) (TrivialEncoding _) (.trivialEncoding _)
-
-def _root_.New.DPrim.{u, v} : new_type% @DPrim.{u, v} :=
-  fun _ _ _ _ _ f => .mk (fun _ => DPrimrec f) (TrivialEncoding _) (.trivialEncoding _)
-
-def _root_.New.Irrel.{u} : new_type% @Irrel.{u} :=
-  fun _ α => .mk (fun _ => Irrelevant α) (TrivialEncoding _) (.trivialEncoding _)
-
-section
-
-set_option linter.unusedVariables.funArgs false
-
-instance instIrrelProof (p : Prop) : Irrel p := .unsafeIntro
-instance instIrrelSort : Irrel (Sort u) := .unsafeIntro
-instance instIrrelForall {α : Sort u} {β : α → Sort v} [∀ a, Irrel (β a)] :
-    Irrel ((a : α) → β a) := .unsafeIntro
-
-lemma DPrim.id {α : Sort u} : DPrim (fun x : α => x) := .unsafeIntro
-lemma DPrim.comp.{u, v, w} {β : Sort v} {γ : β → Sort w} {f : (b : β) → γ b}
-    (hf : DPrim f) {α : Sort u} {g : α → β} (hg : DPrim g) :
-    DPrim (fun x : α => f (g x)) := .unsafeIntro
-lemma DPrim.compComputable.{u, v, w} {β : Sort v} {γ : β → Sort w} {f : (b : β) → γ b}
-    (hf : DPrim f) {α : Sort u} {g : α → β} (hg : DComp g) :
-    DComp (fun x : α => f (g x)) := .unsafeIntro
-lemma DPrim.irrel {α : Sort u} {β : α → Sort v} [∀ a, Irrel (β a)]
-    {f : (a : α) → β a} : DPrim f := .unsafeIntro
-lemma DPrim.proof {α : Sort u} {β : α → Prop}
-    {f : (a : α) → β a} : DPrim f := .irrel
-lemma DPrim.sort {α : Sort u} {f : (a : α) → Sort v} : DPrim f := .irrel
-lemma DPrim.curry {α : Sort u} {β : α → Sort v} {γ : (a : α) → β a → Sort w}
-    {f : (a : α) → (b : β a) → γ a b} (hf : DComp fun c : PSigma β => f c.1 c.2) :
-    DPrim f := .unsafeIntro
-
-lemma DComp.of_prim {α : Sort u} {β : α → Sort v}
-    {f : (a : α) → β a} (hf : DPrim f) : DComp f := .unsafeIntro
-lemma DComp.id {α : Sort u} : DComp (fun x : α => x) := .of_prim .id
-lemma DComp.comp.{u, v, w} {β : Sort v} {γ : β → Sort w} {f : (b : β) → γ b}
-    (hf : DComp f) {α : Sort u} {g : α → β} (hg : DComp g) :
-    DComp (fun x : α => f (g x)) := .unsafeIntro
-lemma DComp.irrel {α : Sort u} {β : α → Sort v} [∀ a, Irrel (β a)]
-    {f : (a : α) → β a} : DComp f := .unsafeIntro
-lemma DComp.proof {α : Sort u} {β : α → Prop}
-    {f : (a : α) → β a} : DComp f := .irrel
-lemma DComp.sort {α : Sort u} {f : (a : α) → Sort v} : DComp f := .irrel
-lemma DComp.curry {α : Sort u} {β : α → Sort v} {γ : (a : α) → β a → Sort w}
-    {f : (a : α) → (b : β a) → γ a b} (hf : DComp fun c : PSigma β => f c.1 c.2) :
-    DComp f := .of_prim (.curry hf)
-lemma DComp.app.{c, u, v}
-    {α : Sort c} {β : α → Sort u} {γ : (a : α) → β a → Sort v}
-    {f : (a : α) → (b : β a) → γ a b} (hf : DComp f)
-    {g : (a : α) → β a} (hg : DComp g) :
-    DComp (fun x : α => f x (g x)) := .unsafeIntro
-
-lemma _root_.New.instIrrelProof : new_type% @instIrrelProof := @instIrrelevant
-lemma _root_.New.instIrrelSort.{u} : new_type% @instIrrelSort.{u} := @instIrrelevantSort
-lemma _root_.New.instIrrelForall.{u, v} : new_type% @instIrrelForall.{u, v} :=
-  fun _ α _ β _ h => @instIrrelevantForall _ α _ β h
-
-lemma _root_.New.DPrim.id.{u} : new_type% @DPrim.id.{u} := @DPrimrec.id
-lemma _root_.New.DPrim.comp.{u, v, w} : new_type% @DPrim.comp.{u, v, w} :=
-  fun _ _ _ _ _ _ _ hf _ _ _ _ _ hg => .comp hf hg
-lemma _root_.New.DPrim.compComputable.{u, v, w} : new_type% @DPrim.compComputable.{u, v, w} :=
-  fun _ _ _ _ _ _ _ hf _ _ _ _ _ hg => hf.compComputable hg
-lemma _root_.New.DPrim.irrel.{u, v} : new_type% @DPrim.irrel.{u, v} :=
-  fun _ _ _ _ _ h _ _ => @DPrimrec.irrelevant _ _ _ _ h _ _
-lemma _root_.New.DPrim.proof.{u} : new_type% @DPrim.proof.{u} := @DPrimrec.proof
-lemma _root_.New.DPrim.sort.{u, v} : new_type% @DPrim.sort.{u, v} := @DPrimrec.sort
-lemma _root_.New.DPrim.curry.{u, v, w} : new_type% @DPrim.curry.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => .curry hf
-
-lemma _root_.New.DComp.of_prim.{u, v} : new_type% @DComp.of_prim.{u, v} :=
-  fun _ _ _ _ _ _ _ hf => .of_prim hf
-lemma _root_.New.DComp.id.{u} : new_type% @DComp.id.{u} := @DComputable.id
-lemma _root_.New.DComp.comp.{u, v, w} : new_type% @DComp.comp.{u, v, w} :=
-  fun _ _ _ _ _ _ _ hf _ _ _ _ _ hg => .comp hf hg
-lemma _root_.New.DComp.irrel.{u, v} : new_type% @DComp.irrel.{u, v} :=
-  fun _ _ _ _ _ h _ _ => @DComputable.irrelevant _ _ _ _ h _ _
-lemma _root_.New.DComp.proof.{u} : new_type% @DComp.proof.{u} := @DComputable.proof
-lemma _root_.New.DComp.sort.{u, v} : new_type% @DComp.sort.{u, v} := @DComputable.sort
-lemma _root_.New.DComp.curry.{u, v, w} : new_type% @DComp.curry.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => .curry hf
-lemma _root_.New.DComp.app.{u, v, w} : new_type% @DComp.app.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf _ _ _ hg => .app hf hg
-
-lemma PSigma.mk.dprim {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → α c} (hf : DPrim f) {g : (c : ctx) → β c (f c)} (hg : DPrim g) :
-    DPrim (fun c => PSigma.mk (f c) (g c)) := .unsafeIntro
-
-lemma PSigma.fst.dprim {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → PSigma (β c)} (hf : DPrim f) :
-    DPrim (fun c => (f c).1) := .unsafeIntro
-
-lemma PSigma.snd.dprim {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → PSigma (β c)} (hf : DPrim f) :
-    DPrim (fun c => (f c).2) := .unsafeIntro
-
-lemma PSigma.mk.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → α c} (hf : DComp f) {g : (c : ctx) → β c (f c)} (hg : DComp g) :
-    DComp (fun c => PSigma.mk (f c) (g c)) := .unsafeIntro
-
-lemma PSigma.fst.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → PSigma (β c)} (hf : DComp f) :
-    DComp (fun c => (f c).1) := .unsafeIntro
-
-lemma PSigma.snd.dcomp {ctx : Sort u} {α : ctx → Sort v} {β : (c : ctx) → α c → Sort w}
-    {f : (c : ctx) → PSigma (β c)} (hf : DComp f) :
-    DComp (fun c => (f c).2) := .unsafeIntro
-
-lemma _root_.New.PSigma.mk.dprim.{u, v, w} : new_type% @PSigma.mk.dprim.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf _ _ _ hg => New.PSigma.mk.primrec hf hg
-lemma _root_.New.PSigma.fst.dprim.{u, v, w} : new_type% @PSigma.fst.dprim.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.PSigma.fst.primrec hf
-lemma _root_.New.PSigma.snd.dprim.{u, v, w} : new_type% @PSigma.snd.dprim.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.PSigma.snd.primrec hf
-lemma _root_.New.PSigma.mk.dcomp.{u, v, w} : new_type% @PSigma.mk.dcomp.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf _ _ _ hg => New.PSigma.mk.computable hf hg
-lemma _root_.New.PSigma.fst.dcomp.{u, v, w} : new_type% @PSigma.fst.dcomp.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.PSigma.fst.computable hf
-lemma _root_.New.PSigma.snd.dcomp.{u, v, w} : new_type% @PSigma.snd.dcomp.{u, v, w} :=
-  fun _ _ _ _ _ _ _ _ _ hf => New.PSigma.snd.computable hf
-
-end
 
 namespace DPrimrec.Tactic.Other
 
@@ -274,7 +141,6 @@ def mkPred (prim : Bool) {u v : Level} {α : Q(Sort u)} {β : Q($α → Sort v)}
 partial def whnfFast (e : Expr) (zeta : Bool) (argsRev : Array Expr := #[]) : MetaM Expr := do
   match e with
   | .app f a => whnfFast f zeta (argsRev.push a)
-  | .proj .. => return argsRev.foldr (fun a f => f.app a) (← projToFn e)
   | .mdata _ e => whnfFast e zeta argsRev
   | .lam .. => if argsRev.isEmpty then return e else whnfFast (e.betaRev argsRev) zeta
   | .letE _ _ v b _ =>
@@ -290,7 +156,7 @@ structure LocalThm where
 
 def LocalThm.instantiate (thm : LocalThm) (univ : Name) (clvl : Level) (ctx : Expr) : Expr :=
   let repl (lvl : Name) : Option Level := if lvl = univ then clvl else none
-  .app (thm.value.instantiateLevelParamsCore repl) ctx
+  (thm.value.instantiateLevelParamsCore repl).betaRev #[ctx]
 
 structure Context where
   contextUniv : Name
@@ -355,6 +221,45 @@ partial def isTriviallyIrrelevant (e : Expr) : MetaM <| Option (Level × Expr) :
   else
     return none
 
+def isBVarProjCont (e : Expr) : Bool :=
+  match e with
+  | .proj ``PSigma 0 e => isBVarProjCont e
+  | .bvar 0 => true
+  | _ => false
+
+def isBVarProj (e : Expr) : Bool :=
+  match e with
+  | .proj ``PSigma 0 e | .proj ``PSigma 1 e =>
+    isBVarProjCont e
+  | _ => false
+
+def extractBetasFromPSigma (ty : Expr) (n : Nat) (us : List Level := [])
+    (revArgs : Array Expr := #[]) : MetaM (List Level × Array Expr) := do
+  let n + 1 := n | unreachable!
+  let ty ← if ty.isAppOfArity ``PSigma 2 then pure ty else whnf ty
+  let q(PSigma.{u, v} $α $β) := ty | throwError "Internal error in other_dcomp_tac"
+  if n = 1 then
+    return (u :: v :: us, revArgs.push β |>.push α)
+  extractBetasFromPSigma α n (v :: us) (revArgs.push β)
+
+def mkBVarProjProof (prim : Bool) (ctx : Expr) (b : Expr) : MetaM Expr := do
+  let mut b := b
+  let mut last := true
+  if let .proj ``PSigma 1 e := b then
+    b := e
+    last := false
+  let mut n := 0
+  repeat
+    if let .proj ``PSigma 0 e := b then
+      b := e
+      n := n + 1
+    else
+      break
+  assert! b matches .bvar 0
+  let thm ← DCompHelperTheorems.mkBVarLemma (comp := !prim) (priv := true) last n
+  let (us, revArgs) ← extractBetasFromPSigma ctx (if last then n + 1 else n + 2)
+  return mkAppRev (.const thm us) revArgs
+
 mutual
 partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
     {ctx : Q(Sort clvl)} {res : Q($ctx → Sort rlvl)} (f : Q((a : $ctx) → $res a)) :
@@ -374,9 +279,55 @@ partial def handleUnderApplication (prim : Bool) {clvl rlvl : Level}
   have b' : Q((c : $ctx) → $t' c → Sort b'lvl) := b'
   have : rlvl =QL imax t'lvl b'lvl := ⟨⟩
   have : $res =Q fun c => (x : $t' c) → $b' c x := ⟨⟩
-  let proof ← solveDPrimGoal false q(fun x : PSigma $t' => $f x.1 x.2)
+  let f' : Q((x : PSigma $t') → $b' x.1 x.2) := .lam `c q(PSigma $t')
+    (Impl.betaRev' f [.proj ``PSigma 1 (.bvar 0), .proj ``PSigma 0 (.bvar 0)]) .default
+  let proof ← solveDPrimGoal false q($f')
   return match prim with
   | true | false => q(.curry $proof)
+
+partial def handleOverApplication
+    (prim : Bool) {clvl rlvl : Level} {ctx : Q(Sort clvl)} {res : Q($ctx → Sort rlvl)}
+    (f : Q((a : $ctx) → $res a)) (b val : Expr) (overArgs : Subarray Expr) :
+    M Expr := do
+  if overArgs.isEmpty then
+    return val
+  let .lam nm _ _ bi := id f | unreachable!
+  let false := prim |
+    try
+      return ← handleUnderApplication prim q($f)
+    catch _ =>
+      withLocalDecl nm bi ctx fun var => do
+        throwError "invalid over-application in primrec goal: \
+          expected at most {overArgs.start} arguments but found {overArgs.stop} in\
+          {indentExpr <| b.instantiate1 var}"
+  let mut type ←
+    withLocalDeclQ nm bi q($ctx) fun var => do
+      let mut type ← inferType (b.instantiate1 var)
+      if getRawForallArity type < overArgs.size then
+        type ← liftM <| forallBoundedTelescope type (some overArgs.size) mkForallFVars
+      return type.abstract #[var]
+  let mut b := b
+  let mut val := val
+  for arg in overArgs do
+    let .forallE nm' t' b' bi' := id type |
+      withLocalDecl nm bi ctx fun var =>
+        throwError "function expected at{indentExpr (b.instantiate1 var)}\n\
+          but found type{indentExpr (type.instantiate1 var)}"
+    let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
+    let b'lvl ← withLocalDecl nm bi ctx fun var =>
+      withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>
+        getLevel (b'.instantiateRev #[var, var'])
+    have t'lam : Q($ctx → Sort t'lvl) := .lam nm ctx t' bi
+    have b'lam : Q((c : $ctx) → $t'lam c → Sort b'lvl) :=
+      .lam nm ctx (.lam nm' t' b' bi') bi
+    have bLambda : Q((c : $ctx) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx b bi
+    have argLambda : Q((c : $ctx) → $t'lam c) := .lam nm ctx arg bi
+    have val' : Q(DComp $bLambda) := val
+    let argProof ← solveDPrimGoal false q($argLambda)
+    val := q(DComp.app $val' $argProof)
+    type := b'.instantiate1 arg
+    b := b.app arg
+  return val
 
 -- assumes that `f` is a lambda
 partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
@@ -394,9 +345,14 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       let _irrel : Q((x : $ctx) → Irrel ($res x)) ← mkLambdaFVars #[var] irrel
       return match prim with
       | true | false => q(.irrel)
-  let b ← withLocalDeclD `c ctx fun var => do
-    return (← whnfFast (b.instantiate1 var) (← read).zeta).abstract #[var]
-  trace[debug] "after whnfFast: {b}"
+  let mut b ← whnfFast b (← read).zeta
+  if isBVarProj b.getAppFn then
+    let proof ← mkBVarProjProof prim ctx b.getAppFn
+    return ← handleOverApplication prim q($f) b.getAppFn proof b.getAppArgs[*...*]
+  if b.getAppFn.isProj then
+    b ← withLocalDeclD `c ctx fun var => do
+      let b := b.instantiate1 var
+      return (b.updateFn (← projToFn b.getAppFn)).abstract #[var]
   b.withApp fun fn args => do
   let thm ← match fn with
     | .sort u =>
@@ -481,43 +437,8 @@ partial def solveDPrimGoal (prim : Bool) {clvl rlvl : Level}
       val := val.app subgoal
   if args.size = thm.paramInfos.size then
     return val
-  -- over-application (ensure we are in computable territory)
-  let false := prim |
-    try
-      return ← handleUnderApplication prim q($f)
-    catch _ =>
-      withLocalDecl nm bi ctx fun var => do
-        throwError "invalid over-application in primrec goal: \
-          expected at most {thm.paramInfos.size} arguments but found {args.size} in\
-          {indentExpr <| b.instantiate1 var}"
-  let mut b := mkAppN fn (args.take thm.paramInfos.size)
-  let mut type ←
-    withLocalDeclQ nm bi q($ctx) fun var => do
-      let mut type ← inferType (b.instantiate1 var)
-      if getRawForallArity type < args.size - thm.paramInfos.size then
-        type ← liftM <| forallBoundedTelescope type (some (args.size - thm.paramInfos.size))
-            mkForallFVars
-      return type.abstract #[var]
-  for arg in args[thm.paramInfos.size...*] do
-    let .forallE nm' t' b' bi' := id type |
-      withLocalDecl nm bi ctx fun var =>
-        throwError "function expected at{indentExpr (b.instantiate1 var)}\n\
-          but found type{indentExpr (type.instantiate1 var)}"
-    let t'lvl ← withLocalDecl nm bi ctx fun var => getLevel (t'.instantiate1 var)
-    let b'lvl ← withLocalDecl nm bi ctx fun var =>
-      withLocalDecl nm' bi' (t'.instantiate1 var) fun var' =>
-        getLevel (b'.instantiateRev #[var, var'])
-    have t'lam : Q($ctx → Sort t'lvl) := .lam nm ctx t' bi
-    have b'lam : Q((c : $ctx) → $t'lam c → Sort b'lvl) :=
-      .lam nm ctx (.lam nm' t' b' bi') bi
-    have bLambda : Q((c : $ctx) → (a : $t'lam c) → $b'lam c a) := .lam nm ctx b bi
-    have argLambda : Q((c : $ctx) → $t'lam c) := .lam nm ctx arg bi
-    have val' : Q(DComp $bLambda) := val
-    let argProof ← solveDPrimGoal false q($argLambda)
-    val := q(DComp.app $val' $argProof)
-    type := b'.instantiate1 arg
-    b := b.app arg
-  return val
+  let b := mkAppN fn (args.take thm.paramInfos.size)
+  handleOverApplication prim q($f) b val args[thm.paramInfos.size...*]
 
 end
 

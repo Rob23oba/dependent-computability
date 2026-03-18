@@ -1178,6 +1178,12 @@ theorem False.rec.dprim.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u
 theorem False.rec.dcomp.{c, u} {ctx : Sort c} {motive : ctx → False → Sort u}
     {t : ctx → False} : DComp fun c ↦ False.rec (motive c) (t c) := .of_prim False.rec.dprim
 
+theorem _root_.New.Array.mk.dprim.{c, u} : new_type% @Array.mk.dprim.{c, u} := by
+  intro ctx ctx' m m' t t' ⟨⟩ ⟨f, hf, hf'⟩
+  refine ⟨f, hf, ?_⟩
+  intro c c' cn hcn
+  exact ⟨hf' hcn⟩
+
 theorem _root_.New.False.rec.dprim.{c, u} : new_type% @False.rec.dprim.{c, u} := by
   intro ctx ctx' m m' t t'
   refine ⟨_, .zero, ?_⟩

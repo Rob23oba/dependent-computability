@@ -2,9 +2,21 @@ import DependentComputability.Tactic.NewDPrimStep
 import DependentComputability.Tactic.OtherDPrimStep
 import DependentComputability.Tactic.Delab
 import DependentComputability.Tactic.LetNew
+import DependentComputability.Tactic.BetaExpand
 import DependentComputability.NewDecls
 
 open scoped Delab
+
+set_option backward.do.legacy false
+
+-- probably as much as you'll ever need
+-- note: this causes a maxHeartbeats exceeded in Lean.LibrarySuggestions.SymbolFrequency
+-- during build not sure what to do about that
+open DCompHelperTheorems in
+run_meta
+  for i in *...32 do
+    recConvertToNew <| ← mkBVarLemma (comp := true) (priv := false) (last := false) i
+    recConvertToNew <| ← mkBVarLemma (comp := true) (priv := false) (last := true) i
 
 open Nat.Partrec Denumerable in
 private def selfCallWith (x : ℕ) : Part ℕ :=
@@ -484,7 +496,6 @@ def autoDComp (name : Name) (arity : Option Nat := none) : MetaM Unit := do
         have : $const =Q $value := ⟨⟩
         let result ← (Other.solveDPrimGoal false q($value)).run context
         have result : Q(DComp $const) := q($result)
-        check result
         addDecl <| .thmDecl {
           name := name ++ `dcomp
           levelParams := ctxUniv :: info.levelParams
