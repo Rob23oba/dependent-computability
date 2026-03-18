@@ -2,7 +2,6 @@ import DependentComputability.Tactic.NewDPrimStep
 import DependentComputability.Tactic.OtherDPrimStep
 import DependentComputability.Tactic.Delab
 import DependentComputability.Tactic.LetNew
-import DependentComputability.Tactic.BetaExpand
 import DependentComputability.NewDecls
 
 open scoped Delab
