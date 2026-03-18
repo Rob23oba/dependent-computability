@@ -138,7 +138,7 @@ instance {α : Type u} {α' : new_type% α} [Encodable α] [CompatibleEncodingRe
   obtain ⟨enc_prim, dec_prim, _, _, _⟩ := ‹_›
   exact ⟨.of_prim enc_prim, .of_prim dec_prim, new% _, new% _, new% _⟩
 
-theorem dprimrec_iff_natPrimrec (f : ℕ → ℕ) (f_extra : new_type% f) :
+lemma dprimrec_iff_natPrimrec (f : ℕ → ℕ) (f_extra : new_type% f) :
     DPrimrec (new% f) ↔ Nat.Primrec f := by
   constructor
   · intro ⟨g, hg, hg'⟩
@@ -147,8 +147,6 @@ theorem dprimrec_iff_natPrimrec (f : ℕ → ℕ) (f_extra : new_type% f) :
     assumption
   · intro hf
     exact ⟨f, hf, fun | _, _, _, rfl => rfl⟩
-
-axiom New.sorryAx.{u} : new_type% @sorryAx.{u}
 
 def DPart {α : Sort u} {β : α → Type v} (f : (a : α) → Part (β a)) : Prop :=
   ∃ g : (a : α) → ωPart (β a), DComp g ∧ ∀ x, f x = g x
@@ -295,12 +293,6 @@ theorem eq_of_iff_ωProp {p : Prop} {p' : new_type% p}
   · intro h₁ h₂
     with_reducible exact InhabitedExtra.default h₁
 
-def test (x : Nat) : Nat :=
-  match x with
-  | 0 => 5
-  | 1 => 341
-  | _ => 21
-
 theorem eq_of_eq_ωPart {α : Type u} {α_extra : new_type% α} {p : Part α} {p' : new_type% p}
     {q : ωPart α} {q' : new_type% q} (h : p = q) (h' : new_type% h)
     (p'₂ : new_type% p.Dom) [inst : InhabitedExtra p'₂] :
@@ -435,6 +427,8 @@ theorem dprimrec_iff_primrec {α : Type u} {α_extra : new_type% α}
       dcomp_tac
     exact this_extra
 
+alias ⟨DPrimrec.primrec, _⟩ := dprimrec_iff_primrec
+
 @[simp] lemma ωPart.ofOption_none : ofOption (none : Option α) = .none := rfl
 @[simp] lemma ωPart.ofOption_some (x : α) : ofOption (some x) = .some x := rfl
 
@@ -505,32 +499,7 @@ theorem dcomputable_iff_computable {α : Type u} {α_extra : new_type% α}
       dcomp_tac
     exact this_extra
 
-def DPartrec {α : Sort u} {α' : new_type% α} {β : α → Type v} {β' : new_type% β}
-    {f : (a : α) → Part (β a)} (f' : new_type% f) : Prop :=
-  ∃ h : DPart f, new_type% h
-
-set_option Elab.async false in -- Elab.async doesn't play well with `have_new`
-theorem partrec_iff_dpartrec {α : Type u} {α_extra : new_type% α}
-    {β : Type v} {β_extra : new_type% β} [Primcodable α] [Primcodable β]
-    [WeaklyCompatibleEncodingRelation α_extra] [WeaklyCompatibleEncodingRelation β_extra]
-    (f : α → Part β) :
-    Partrec f ↔ ∃ f_extra : new_type% f, DPartrec f_extra := by
-  prepare_compatible DComp WeaklyCompatibleEncodingRelation α
-  prepare_compatible DComp WeaklyCompatibleEncodingRelation β
-  unfold Partrec
-  simp only [← αdec_eq, ← βenc_eq]
-  rw [natPartrec_iff_exists_dpart]
-  constructor
-  · intro ⟨f', hf, hf'⟩
-    sorry
-  · intro ⟨f', ⟨hf, hf'⟩⟩
-    use new% _
-    have_new res : DPart fun n ↦ (Part.ofOption (αdec n)).bind fun a ↦ Part.map βenc (f a) := by
-      obtain ⟨g, hg, hg'⟩ := hf
-      cases funext hg'
-      simp only [← ωPart.coe_ofOption, ← ωPart.coe_map, ← ωPart.coe_bind]
-      exact ⟨_, by dcomp_tac, fun _ => rfl⟩
-    use res
+alias ⟨DComputable.computable, _⟩ := dcomputable_iff_computable
 
 instance : CompatibleEncodingRelation (new% Nat) :=
   ⟨.id, Option.some.dprim .id, new% _, new% _, new% _⟩
